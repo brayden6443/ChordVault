@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Discover uncommon guitar voicings by mood, color and character." />
+    <title>The Chord Vault — Curated Guitar Voicings</title>
+    <script>document.documentElement.dataset.theme=localStorage.getItem('chord-vault-theme')||'dark'</script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main id="top">
+      <nav class="shell nav" aria-label="Primary navigation">
+        <a class="brand" href="#top">THE CHORD VAULT</a>
+        <div class="nav-links"><a href="#how-to-read">How to read</a></div>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to light mode">☼ Light</button>
+          <button class="saved-button" id="savedButton" type="button" aria-label="0 saved chords"><span>♡</span> Saved <strong id="savedCount">0</strong></button>
+        </div>
+      </nav>
+
+      <section class="shell library" id="explore">
+        <div class="filters" role="group" aria-label="Filter chords by mood"></div>
+        <div class="chord-grid" id="chordGrid"></div>
+        <p class="empty" id="empty" hidden>No voicings match that feeling.</p>
+      </section>
+
+      <section class="how-to-read" id="how-to-read">
+        <div class="shell">
+          <p class="eyebrow">CHORD CHART BASICS</p>
+          <h2>How to read</h2>
+          <div class="guide-layout">
+            <div class="guide-chart" id="guideDiagram"></div>
+            <div class="guide-notes">
+              <article><span>01</span><div><h3>Strings</h3><p>The six vertical lines represent the guitar strings, ordered low E through high e from left to right.</p></div></article>
+              <article><span>02</span><div><h3>Frets</h3><p>Horizontal lines divide the fretboard. The numbers on the right identify each fret position.</p></div></article>
+              <article><span>03</span><div><h3>Finger dots</h3><p>Purple dots show where to press. The black number inside each dot tells you which finger to use.</p></div></article>
+              <article><span>04</span><div><h3>Open strings</h3><p>A circle above a string means play that string open without pressing a fret.</p></div></article>
+              <article><span>05</span><div><h3>Muted strings</h3><p>An × above a string means do not play that string.</p></div></article>
+              <article><span>06</span><div><h3>The nut</h3><p>The thicker top line appears on open-position chords and represents the guitar’s nut.</p></div></article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="shell"><a class="brand" href="#top">THE CHORD VAULT</a><p>Made for curious guitarists.</p></footer>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
