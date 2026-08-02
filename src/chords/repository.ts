@@ -89,3 +89,15 @@ export function canApproveVoicing(candidate: ChordVoicing, publicVoicings: Chord
   const near = publicVoicings.some((voicing) => scopeKey(voicing) === scopeKey(candidate) && voicingSimilarity(candidate, voicing) >= similarityThreshold);
   return near ? { allowed: false, reason: "This voicing is already in the Chord Vault." } : { allowed: true };
 }
+
+export function findVoicingDuplicate(candidate: ChordVoicing, publicVoicings: ChordVoicing[], similarityThreshold = 90): { match: ChordVoicing; similarity: number; exact: boolean } | null {
+  const exact = publicVoicings.find((voicing) => exactVoicingKey(voicing) === exactVoicingKey(candidate));
+  if (exact) return { match: exact, similarity: 100, exact: true };
+  let best: { match: ChordVoicing; similarity: number; exact: boolean } | null = null;
+  for (const voicing of publicVoicings) {
+    if (scopeKey(voicing) !== scopeKey(candidate)) continue;
+    const similarity = voicingSimilarity(candidate, voicing);
+    if (similarity >= similarityThreshold && (!best || similarity > best.similarity)) best = { match: voicing, similarity, exact: false };
+  }
+  return best;
+}

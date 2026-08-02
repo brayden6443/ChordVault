@@ -28,6 +28,7 @@
           <p id="batchStatus" role="status">Ready to generate.</p>
         </div>
         <div class="generator-fields">
+          <label>Generation preset<select id="presetSelect"><option value="balanced">Balanced</option><option value="beginner">Beginner-friendly</option><option value="open">Open-string ambient</option><option value="jazz">Jazz shells</option><option value="movable">Movable shapes</option><option value="upper">Upper-fret colors</option></select></label>
           <label>Root<select id="rootSelect"></select></label>
           <label>Chord recipe<select id="recipeSelect"></select></label>
           <label>Keep per chord<input id="retainInput" type="number" min="10" max="500" value="100" /></label>
@@ -37,13 +38,24 @@
           <button class="secondary-button" id="generateBatch" type="button">Generate 12-root batch</button>
           <button class="secondary-button" id="exportJson" type="button">Export approved JSON</button>
           <button class="secondary-button" id="exportCsv" type="button">Export approved CSV</button>
+          <button class="secondary-button" id="backupWorkflow" type="button">Backup workspace</button>
+          <button class="secondary-button" id="undoAction" type="button" disabled>Undo last action</button>
         </div>
+      </section>
+
+      <section class="import-panel" aria-labelledby="importTitle">
+        <div><p class="review-kicker">Approved chord import</p><h2 id="importTitle">Import approved chords</h2><p>Drop a Chord Vault CSV or JSON export here. Valid chords will enter Pre-reviewed.</p></div>
+        <label class="import-drop-zone" id="importDropZone" tabindex="0">
+          <input id="importFile" type="file" accept=".csv,.json,application/json,text/csv" />
+          <strong>Drop CSV or JSON</strong><span>or click to choose a file</span>
+        </label>
+        <p class="import-status" id="importStatus" role="status">No file imported.</p>
       </section>
 
       <section class="review-workspace" aria-live="polite">
         <aside class="review-queue" aria-label="Review queue">
           <div><span>Pending</span><strong id="pendingCount">0</strong></div>
-          <div><span>Approved</span><strong id="approvedCount">0</strong></div>
+          <div><span>Pre-reviewed</span><strong id="approvedCount">0</strong></div>
           <div><span>Rejected</span><strong id="rejectedCount">0</strong></div>
           <div><span>Position</span><strong id="positionCount">0 / 0</strong></div>
         </aside>
@@ -51,7 +63,41 @@
           <div class="review-empty"><h2>No candidates yet</h2><p>Generate one chord or a complete 12-root batch to begin reviewing.</p></div>
         </article>
       </section>
+
+      <section class="workflow-dashboard" aria-labelledby="coverageTitle">
+        <div class="workflow-dashboard-heading"><div><p class="review-kicker">Quality control</p><h2 id="coverageTitle">Coverage & attention</h2></div><p>Coverage is calculated from the Main Vault. Attention items have incomplete metadata or unusual playability.</p></div>
+        <div class="coverage-table-wrap"><table class="coverage-table"><thead><tr><th>Root</th><th>Major</th><th>Minor</th><th>7th</th><th>Maj7</th><th>Min7</th><th>Sus</th><th>Extensions</th></tr></thead><tbody id="coverageBody"></tbody></table></div>
+        <div class="audit-panel"><h3>Recent activity</h3><ol id="auditList"></ol></div>
+      </section>
+
+      <section class="library-editor" aria-labelledby="libraryEditorTitle">
+        <div class="library-editor-heading">
+          <div><p class="review-kicker">Vault management</p><h2 id="libraryEditorTitle">Library editor</h2></div>
+          <div class="library-editor-heading-actions"><p>Edit difficulty and descriptors for public and approved chords.</p></div>
+        </div>
+        <div class="library-source-tabs" id="librarySourceTabs" role="group" aria-label="Choose chord library source">
+          <button class="active" data-library-source="All" aria-pressed="true">All</button>
+          <button data-library-source="Unapproved" aria-pressed="false">Unapproved</button>
+          <button data-library-source="Main Vault" aria-pressed="false">Main Vault</button>
+          <button data-library-source="Pre-reviewed" aria-pressed="false">Pre-reviewed</button>
+          <button data-library-source="Needs attention" aria-pressed="false">Needs attention</button>
+          <button data-library-source="Review later" aria-pressed="false">Review later</button>
+        </div>
+        <div class="bulk-toolbar"><label><input id="selectVisible" type="checkbox" /> Select page</label><select id="bulkDifficulty"><option value="">Set difficulty</option><option value="1">1 / 5</option><option value="2">2 / 5</option><option value="3">3 / 5</option><option value="4">4 / 5</option><option value="5">5 / 5</option></select><select id="bulkTag"><option value="">Add tag</option></select><button id="bulkLater" type="button">Review later</button><button id="bulkApprove" type="button">Final approve selected</button></div>
+        <div class="library-editor-grid" id="libraryEditorGrid"></div>
+        <nav class="library-pagination" aria-label="Library editor pages">
+          <button id="libraryPrevious" type="button">Previous</button>
+          <span id="libraryPageStatus">Page 1</span>
+          <button id="libraryNext" type="button">Next</button>
+        </nav>
+      </section>
     </main>
+    <dialog class="duplicate-dialog" id="duplicateDialog">
+      <div class="duplicate-dialog-heading"><div><p class="review-kicker">Possible duplicate</p><h2>Compare voicings</h2></div><button id="closeDuplicate" type="button" aria-label="Close comparison">×</button></div>
+      <p id="duplicateSummary"></p>
+      <div class="duplicate-comparison" id="duplicateComparison"></div>
+      <div class="duplicate-actions"><button class="secondary-button" id="keepExisting" type="button">Keep existing</button><button class="secondary-button" id="mergeDuplicate" type="button">Merge metadata</button><button class="secondary-button" id="replaceDuplicate" type="button">Replace existing</button><button class="primary-button" id="publishDuplicate" type="button">Keep both</button></div>
+    </dialog>
     <script type="module" src="/src/review.ts"></script>
   </body>
 </html>

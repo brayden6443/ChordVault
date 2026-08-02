@@ -52,6 +52,7 @@ export interface ChordVoicing {
   difficulty: 1 | 2 | 3 | 4 | 5;
   moodTags: string[];
   genreTags: string[];
+  descriptorTags?: string[];
   description: string;
   qualityScore: number;
   generatorQualityScore?: number;

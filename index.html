@@ -35,20 +35,36 @@
           <button type="button" data-mood="Tense" aria-pressed="false">Tense</button>
           <button type="button" data-mood="Open" aria-pressed="false">Open</button>
         </div>
-        <div class="note-filter-wrap">
-          <span class="filter-label">Note</span>
-          <div class="note-filters" id="noteFilters" role="group" aria-label="Filter chords by root note"></div>
-        </div>
-        <div class="chord-filter-groups">
-          <div class="chord-filter-group">
-            <span class="filter-label">Major / Minor</span>
-            <div class="quality-filters filter-tabs" id="qualityFilters" role="group" aria-label="Filter chords by major or minor family"></div>
+        <section class="filter-settings basic-settings" aria-labelledby="basicSettingsTitle">
+          <h2 class="settings-title" id="basicSettingsTitle">Basic settings</h2>
+          <div class="note-filter-wrap">
+            <span class="filter-label">Note</span>
+            <div class="note-filters" id="noteFilters" role="group" aria-label="Filter chords by root note"></div>
           </div>
-          <div class="chord-filter-group">
-            <span class="filter-label">Chord recipe</span>
-            <div class="recipe-filters filter-tabs" id="recipeFilters" role="group" aria-label="Filter chords by recipe"></div>
+          <div class="chord-filter-groups basic-filter-groups">
+            <div class="chord-filter-group">
+              <span class="filter-label">Major / Minor</span>
+              <div class="quality-filters filter-tabs" id="qualityFilters" role="group" aria-label="Filter chords by major or minor family"></div>
+            </div>
           </div>
-        </div>
+        </section>
+        <details class="advanced-settings">
+          <summary>Advanced settings</summary>
+          <div class="advanced-settings-content">
+            <div class="chord-filter-group">
+              <span class="filter-label">Chord recipe</span>
+              <div class="recipe-filters filter-tabs" id="recipeFilters" role="group" aria-label="Filter chords by recipe"></div>
+            </div>
+            <div class="chord-filter-group">
+              <span class="filter-label">Difficulty</span>
+              <div class="difficulty-filters filter-tabs" id="difficultyFilters" role="group" aria-label="Filter chords by difficulty"></div>
+            </div>
+            <div class="chord-filter-group">
+              <span class="filter-label">Chord type</span>
+              <div class="type-filters filter-tabs" id="typeFilters" role="group" aria-label="Filter chords by type"></div>
+            </div>
+          </div>
+        </details>
         <div class="chord-grid" id="chordGrid">
           <article class="chord-card chord-placeholder" aria-hidden="true"></article>
           <article class="chord-card chord-placeholder" aria-hidden="true"></article>

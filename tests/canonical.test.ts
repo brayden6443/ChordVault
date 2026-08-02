@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildCanonicalLibrary, CANONICAL_VOICINGS } from "../src/chords/canonical.ts";
 import { exactVoicingKey, voicingSimilarity } from "../src/chords/identity.ts";
-import { buildReviewQueue, canApproveVoicing, seedCanonicalVoicings, sortPublicVoicings } from "../src/chords/repository.ts";
+import { buildReviewQueue, canApproveVoicing, findVoicingDuplicate, seedCanonicalVoicings, sortPublicVoicings } from "../src/chords/repository.ts";
 import { intervalsRelativeToRoot, pitchesForVoicing } from "../src/chords/theory.ts";
 import { STANDARD_TUNING, type ChordVoicing } from "../src/chords/types.ts";
 
@@ -51,6 +51,9 @@ test("review excludes exact, formatting-equivalent, and near duplicates but pres
   const result = buildReviewQueue([exact, near, inversion], []);
   assert.deepEqual(result.queue.map((voicing) => voicing.id), ["different-inversion"]);
   assert.equal(canApproveVoicing(exact, [barre]).allowed, false);
+  assert.equal(findVoicingDuplicate(exact, [barre])?.exact, true);
+  assert.equal(findVoicingDuplicate(near, [barre])?.similarity, voicingSimilarity(near, barre));
+  assert.equal(findVoicingDuplicate(inversion, [barre]), null);
 });
 
 test("public sorting never lets score outrank essential categories", () => {
