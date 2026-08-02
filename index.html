@@ -5,24 +5,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Discover uncommon guitar voicings by mood, color and character." />
     <title>The Chord Vault — Curated Guitar Voicings</title>
+    <link rel="icon" href="data:," />
     <script>document.documentElement.dataset.theme=localStorage.getItem('chord-vault-theme')||'dark'</script>
     <link rel="stylesheet" href="/styles.css" />
+    <style>
+      :root{--muted:#aaa9a4}.chord-placeholder{min-height:480px}.card-number,.tags span{color:#aaa9a4}html[data-theme="light"] .tags span{color:#4f4f55}@media(max-width:760px){.chord-placeholder{min-height:484px}}
+    </style>
   </head>
   <body>
     <main id="top">
       <nav class="shell nav" aria-label="Primary navigation">
         <a class="brand" href="#top">THE CHORD VAULT</a>
-        <div class="nav-links"><a href="#how-to-read">How to read</a></div>
-        <div class="nav-actions">
-          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to light mode">☼ Light</button>
-          <button class="saved-button" id="savedButton" type="button" aria-label="0 saved chords"><span>♡</span> Saved <strong id="savedCount">0</strong></button>
+        <button class="menu-toggle" id="menuToggle" type="button" aria-expanded="false" aria-controls="navPanel" aria-label="Open navigation menu"><span></span><span></span><span></span></button>
+        <div class="nav-panel" id="navPanel">
+          <div class="nav-links"><a href="#how-to-read">How to read</a></div>
+          <div class="nav-actions">
+            <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to light mode">☼ Light</button>
+            <button class="saved-button" id="savedButton" type="button" aria-label="0 saved chords"><span>♡</span> Saved <strong id="savedCount">0</strong></button>
+          </div>
         </div>
       </nav>
 
       <section class="shell library" id="explore">
-        <div class="filters" role="group" aria-label="Filter chords by mood"></div>
-        <div class="chord-grid" id="chordGrid"></div>
+        <div class="filters" role="group" aria-label="Filter chords by mood">
+          <button type="button" class="active" data-mood="All" aria-pressed="true">All</button>
+          <button type="button" data-mood="Dreamy" aria-pressed="false">Dreamy</button>
+          <button type="button" data-mood="Dark" aria-pressed="false">Dark</button>
+          <button type="button" data-mood="Warm" aria-pressed="false">Warm</button>
+          <button type="button" data-mood="Tense" aria-pressed="false">Tense</button>
+          <button type="button" data-mood="Open" aria-pressed="false">Open</button>
+        </div>
+        <div class="chord-grid" id="chordGrid">
+          <article class="chord-card chord-placeholder" aria-hidden="true"></article>
+          <article class="chord-card chord-placeholder" aria-hidden="true"></article>
+          <article class="chord-card chord-placeholder" aria-hidden="true"></article>
+          <article class="chord-card chord-placeholder" aria-hidden="true"></article>
+          <article class="chord-card chord-placeholder" aria-hidden="true"></article>
+          <article class="chord-card chord-placeholder" aria-hidden="true"></article>
+          <article class="chord-card chord-placeholder" aria-hidden="true"></article>
+          <article class="chord-card chord-placeholder" aria-hidden="true"></article>
+          <article class="chord-card chord-placeholder" aria-hidden="true"></article>
+        </div>
         <p class="empty" id="empty" hidden>No voicings match that feeling.</p>
+        <button class="load-more" id="loadMore" type="button">Load more</button>
       </section>
 
       <section class="how-to-read" id="how-to-read">

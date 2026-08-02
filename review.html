@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Chord Vault — Private Review</title>
+    <script>document.documentElement.dataset.theme=localStorage.getItem('chord-vault-theme')||'dark'</script>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/src/review.css" />
+  </head>
+  <body class="review-body">
+    <header class="review-header shell">
+      <div>
+        <p class="review-kicker">Private workspace</p>
+        <h1>Chord review</h1>
+      </div>
+      <div class="review-header-actions">
+        <button class="secondary-button" id="themeToggle" type="button">☼ Light</button>
+        <a class="secondary-button" href="/">Public vault</a>
+      </div>
+    </header>
+
+    <main class="review-main shell">
+      <section class="review-toolbar" aria-labelledby="generatorTitle">
+        <div class="toolbar-heading">
+          <div><p class="review-kicker">Generator</p><h2 id="generatorTitle">Create candidates</h2></div>
+          <p id="batchStatus" role="status">Ready to generate.</p>
+        </div>
+        <div class="generator-fields">
+          <label>Root<select id="rootSelect"></select></label>
+          <label>Chord recipe<select id="recipeSelect"></select></label>
+          <label>Keep per chord<input id="retainInput" type="number" min="10" max="500" value="100" /></label>
+        </div>
+        <div class="toolbar-actions">
+          <button class="primary-button" id="generateOne" type="button">Generate chord</button>
+          <button class="secondary-button" id="generateBatch" type="button">Generate 12-root batch</button>
+          <button class="secondary-button" id="exportJson" type="button">Export approved JSON</button>
+          <button class="secondary-button" id="exportCsv" type="button">Export approved CSV</button>
+        </div>
+      </section>
+
+      <section class="review-workspace" aria-live="polite">
+        <aside class="review-queue" aria-label="Review queue">
+          <div><span>Pending</span><strong id="pendingCount">0</strong></div>
+          <div><span>Approved</span><strong id="approvedCount">0</strong></div>
+          <div><span>Rejected</span><strong id="rejectedCount">0</strong></div>
+          <div><span>Position</span><strong id="positionCount">0 / 0</strong></div>
+        </aside>
+        <article class="review-card" id="reviewCard">
+          <div class="review-empty"><h2>No candidates yet</h2><p>Generate one chord or a complete 12-root batch to begin reviewing.</p></div>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="/src/review.ts"></script>
+  </body>
+</html>
