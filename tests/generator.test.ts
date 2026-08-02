@@ -36,3 +36,17 @@ test("exports valid JSON and CSV, with approved-only helpers", () => {
   assert.equal(approvedCsv(voicings).split("\n").length, 2);
   assert.ok(exportVoicingsCsv(voicings).includes("approvalStatus"));
 });
+
+test("generates valid suspended second and suspended fourth recipes", () => {
+  for (const recipe of [
+    { chordName: "Csus2", tones: [0, 2, 7] },
+    { chordName: "Csus4", tones: [0, 5, 7] },
+  ]) {
+    const voicings = generateVoicings({
+      tuning: STANDARD_TUNING, chordName: recipe.chordName, root: "C",
+      requiredTones: recipe.tones, maxResults: 10,
+    });
+    assert.ok(voicings.length > 0);
+    assert.ok(voicings.every((voicing) => recipe.tones.every((tone) => voicing.intervals.includes(tone))));
+  }
+});

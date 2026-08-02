@@ -1,5 +1,7 @@
 import { approvedCsv, approvedJson } from "./chords/export.ts";
 import { APPROVED_C_PROFILE, rankWithCurationProfile } from "./chords/curation.ts";
+import { buildReviewQueue, canApproveVoicing } from "./chords/repository.ts";
+import { CANONICAL_VOICINGS } from "./chords/canonical.ts";
 import { generateBatch, generateVoicings } from "./chords/generator.ts";
 import { intervalLabel } from "./chords/theory.ts";
 import { STANDARD_TUNING, type ApprovalStatus, type ChordVoicing } from "./chords/types.ts";
@@ -8,6 +10,8 @@ const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const RECIPES = [
   { id: "major", label: "Major", suffix: "", requiredTones: [0, 4, 7], optionalTones: [] },
   { id: "minor", label: "Minor", suffix: "m", requiredTones: [0, 3, 7], optionalTones: [] },
+  { id: "sus2", label: "Suspended 2", suffix: "sus2", requiredTones: [0, 2, 7], optionalTones: [] },
+  { id: "sus4", label: "Suspended 4", suffix: "sus4", requiredTones: [0, 5, 7], optionalTones: [] },
   { id: "maj7", label: "Major 7", suffix: "maj7", requiredTones: [0, 4, 11], optionalTones: [7] },
   { id: "dom7", label: "Dominant 7", suffix: "7", requiredTones: [0, 4, 10], optionalTones: [7] },
   { id: "min7", label: "Minor 7", suffix: "m7", requiredTones: [0, 3, 10], optionalTones: [7] },
@@ -15,8 +19,9 @@ const RECIPES = [
   { id: "min11", label: "Minor 11", suffix: "m11", requiredTones: [0, 3, 10], optionalTones: [2, 5, 7] },
 ];
 
-type SavedReview = Pick<ChordVoicing, "approvalStatus" | "chordName" | "moodTags" | "genreTags" | "description">;
+type SavedReview = Pick<ChordVoicing, "approvalStatus" | "chordName" | "moodTags" | "genreTags" | "description" | "difficulty">;
 const savedReviews: Record<string, SavedReview> = JSON.parse(localStorage.getItem("chord-vault-reviews") ?? "{}");
+let approvedVault: ChordVoicing[] = JSON.parse(localStorage.getItem("chord-vault-approved-voicings") ?? "[]");
 let candidates: ChordVoicing[] = [];
 let currentIndex = 0;
 let audioContext: AudioContext | null = null;
@@ -47,6 +52,7 @@ function saveCurrent(voicing: ChordVoicing): void {
     moodTags: voicing.moodTags,
     genreTags: voicing.genreTags,
     description: voicing.description,
+    difficulty: voicing.difficulty,
   };
   localStorage.setItem("chord-vault-reviews", JSON.stringify(savedReviews));
 }
@@ -106,6 +112,7 @@ function render(): void {
         <label class="editor-field">Chord name<input id="editName" value="${escapeHtml(voicing.chordName)}" /></label>
         <label class="editor-field">Mood tags, comma separated<input id="editMood" value="${escapeHtml(voicing.moodTags.join(", "))}" /></label>
         <label class="editor-field">Genre tags, comma separated<input id="editGenre" value="${escapeHtml(voicing.genreTags.join(", "))}" /></label>
+        <label class="editor-field">Difficulty level<select id="editDifficulty">${[1,2,3,4,5].map((level) => `<option value="${level}"${level === voicing.difficulty ? " selected" : ""}>${level} / 5</option>`).join("")}</select></label>
         <label class="editor-field">Description<textarea id="editDescription">${escapeHtml(voicing.description)}</textarea></label>
       </div>
       <div class="review-decisions">
@@ -120,11 +127,20 @@ function render(): void {
     voicing.chordName = byId<HTMLInputElement>("editName").value.trim() || voicing.chordName;
     voicing.moodTags = splitTags(byId<HTMLInputElement>("editMood").value);
     voicing.genreTags = splitTags(byId<HTMLInputElement>("editGenre").value);
+    voicing.difficulty = Number(byId<HTMLSelectElement>("editDifficulty").value) as 1 | 2 | 3 | 4 | 5;
     voicing.description = byId<HTMLTextAreaElement>("editDescription").value.trim();
     saveCurrent(voicing); render();
   });
   reviewCard.querySelectorAll<HTMLButtonElement>("[data-status]").forEach((button) => button.addEventListener("click", () => {
+    if (button.dataset.status === "approved") {
+      const guard = canApproveVoicing(voicing, [...CANONICAL_VOICINGS, ...approvedVault]);
+      if (!guard.allowed) { batchStatus.textContent = guard.reason!; candidates.splice(currentIndex, 1); currentIndex = Math.min(currentIndex, candidates.length - 1); render(); return; }
+    }
     voicing.approvalStatus = button.dataset.status as ApprovalStatus;
+    if (voicing.approvalStatus === "approved") {
+      approvedVault = [...approvedVault.filter((approved) => approved.id !== voicing.id), voicing];
+      localStorage.setItem("chord-vault-approved-voicings", JSON.stringify(approvedVault));
+    }
     saveCurrent(voicing); advance(1);
   }));
   byId("previousCandidate").addEventListener("click", () => advance(-1));
@@ -169,14 +185,16 @@ function resultLimit(): number { return Math.max(10, Math.min(500, Number(retain
 byId("generateOne").addEventListener("click", () => {
   const selected = recipe();
   batchStatus.textContent = "Generating candidates…";
-  candidates = rankWithCurationProfile(generateVoicings({
-    tuning: STANDARD_TUNING, chordName: `${rootSelect.value}${selected.suffix}`, root: rootSelect.value,
+  const generated = rankWithCurationProfile(generateVoicings({
+    tuning: STANDARD_TUNING, chordName: `${rootSelect.value}${selected.suffix}`, chordQuality: selected.id, root: rootSelect.value,
     requiredTones: selected.requiredTones, optionalTones: selected.optionalTones,
     maxFretSpan: 4, maxFrettedNotes: 5, maxInternalMutedStrings: 1,
     maxRawCandidates: 50_000, maxResults: resultLimit(), allowOmitFifth: true,
   }), APPROVED_C_PROFILE).map(applySaved);
+  const filtered = buildReviewQueue(generated, approvedVault, { qualityThreshold: 45 });
+  candidates = filtered.queue;
   currentIndex = 0;
-  batchStatus.textContent = `${candidates.length} ranked candidates retained.`;
+  batchStatus.textContent = `${candidates.length} retained. Removed: ${exclusionSummary(filtered.excluded)}.`;
   render();
 });
 
@@ -185,15 +203,18 @@ byId("generateBatch").addEventListener("click", async () => {
   batchStatus.textContent = "Generating and ranking thousands of raw candidates…";
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   const batch = generateBatch(ROOTS.map((root) => ({
-    chordName: `${root}${selected.suffix}`, root,
+    chordName: `${root}${selected.suffix}`, chordQuality: selected.id, root,
     requiredTones: selected.requiredTones, optionalTones: selected.optionalTones,
   })), {
     tuning: STANDARD_TUNING, maxFretSpan: 4, maxFrettedNotes: 5, maxInternalMutedStrings: 1,
     maxRawCandidates: 50_000, maxResults: resultLimit(), allowOmitFifth: true,
   }, resultLimit() * ROOTS.length);
-  candidates = rankWithCurationProfile(batch.retained, APPROVED_C_PROFILE).map(applySaved);
+  const ranked = rankWithCurationProfile(batch.retained, APPROVED_C_PROFILE).map(applySaved);
+  const filtered = buildReviewQueue(ranked, approvedVault, { qualityThreshold: 45 });
+  candidates = filtered.queue;
   currentIndex = 0;
-  batchStatus.textContent = `${batch.rawCandidateCount.toLocaleString()} raw shapes checked; ${candidates.length.toLocaleString()} ranked using your ${APPROVED_C_PROFILE.sourceCount} C approvals.`;
+  const removed = Object.values(filtered.excluded).reduce((total, count) => total + count, 0);
+  batchStatus.textContent = `${batch.rawCandidateCount.toLocaleString()} checked; ${candidates.length.toLocaleString()} retained; ${removed.toLocaleString()} removed (${exclusionSummary(filtered.excluded)}).`;
   render();
 });
 
@@ -202,8 +223,11 @@ function download(contents: string, filename: string, type: string): void {
   const link = document.createElement("a"); link.href = url; link.download = filename; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
-byId("exportJson").addEventListener("click", () => download(approvedJson(candidates), "chord-vault-approved.json", "application/json"));
-byId("exportCsv").addEventListener("click", () => download(approvedCsv(candidates), "chord-vault-approved.csv", "text/csv"));
+function exclusionSummary(counts: ReturnType<typeof buildReviewQueue>["excluded"]): string {
+  return `canonical open ${counts.canonicalOpen}, canonical barre ${counts.canonicalBarre}, exact approved ${counts.exactApproved}, near approved ${counts.nearApproved}, below threshold ${counts.belowQualityThreshold}`;
+}
+byId("exportJson").addEventListener("click", () => download(approvedJson(approvedVault), "chord-vault-approved.json", "application/json"));
+byId("exportCsv").addEventListener("click", () => download(approvedCsv(approvedVault), "chord-vault-approved.csv", "text/csv"));
 
 const themeToggle = byId("themeToggle");
 function updateThemeLabel(): void { themeToggle.textContent = document.documentElement.dataset.theme === "light" ? "☾ Dark" : "☼ Light"; }

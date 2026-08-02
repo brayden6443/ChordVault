@@ -50,6 +50,7 @@ function buildVoicing(frets: Array<number | null>, config: GenerationConfig): Ch
     id: `voicing_${hash}`,
     slug: `${slugify(config.chordName)}-${hash}`,
     chordName: config.chordName,
+    chordQuality: config.chordQuality,
     root: pitchClassName(pitchClassFromName(config.root)),
     tuning: config.tuning,
     fretPositions: frets,

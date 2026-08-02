@@ -1,4 +1,6 @@
 export type ApprovalStatus = "pending" | "approved" | "rejected";
+export type VoicingCategory = "Essential Open" | "Essential Barre" | "Other Approved";
+export type ShapeFamily = "Open C shape" | "Open A shape" | "Open G shape" | "Open E shape" | "Open D shape" | "E-shape barre" | "A-shape barre" | "CAGED movable shape" | "Partial barre" | "Shell voicing";
 
 export interface TuningString {
   note: string;
@@ -35,6 +37,7 @@ export interface ChordVoicing {
   id: string;
   slug: string;
   chordName: string;
+  chordQuality?: string;
   root: string;
   tuning: Tuning;
   fretPositions: Array<number | null>;
@@ -56,11 +59,34 @@ export interface ChordVoicing {
   scoreBreakdown: ScoreBreakdown;
   approvalStatus: ApprovalStatus;
   possibleBarres: Array<{ fret: number; fromString: number; toString: number }>;
+  shapeFamily?: ShapeFamily;
+  category?: VoicingCategory;
+  source?: string;
+  isCanonical?: boolean;
+  isEssential?: boolean;
+  displayPriority?: number;
+  movable?: boolean;
+  baseShapeRoot?: string;
+  applicableRoots?: string[];
+}
+
+export interface CanonicalVoicing extends ChordVoicing {
+  chordQuality: string;
+  shapeFamily: ShapeFamily;
+  category: "Essential Open" | "Essential Barre";
+  source: string;
+  isCanonical: true;
+  isEssential: true;
+  displayPriority: number;
+  movable: boolean;
+  baseShapeRoot: string;
+  applicableRoots: string[];
 }
 
 export interface GenerationConfig {
   tuning: Tuning;
   chordName: string;
+  chordQuality?: string;
   root: string;
   requiredTones: number[];
   optionalTones?: number[];
@@ -92,9 +118,29 @@ export interface PlayabilityAnalysis {
 
 export interface BatchChordSpec {
   chordName: string;
+  chordQuality?: string;
   root: string;
   requiredTones: number[];
   optionalTones?: number[];
+}
+
+export interface MigrationReport {
+  dryRun: boolean;
+  canonicalAdded: string[];
+  existingUpgraded: string[];
+  exactDuplicatesFlagged: string[];
+  manualReview: string[];
+  validationFailures: string[];
+}
+
+export interface ReviewExclusionCounts {
+  exactApproved: number;
+  nearApproved: number;
+  canonicalOpen: number;
+  canonicalBarre: number;
+  invalidChord: number;
+  failedPlayability: number;
+  belowQualityThreshold: number;
 }
 
 export interface BatchResult {
