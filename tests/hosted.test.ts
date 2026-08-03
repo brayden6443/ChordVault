@@ -9,7 +9,7 @@ import { backupThenUpload, prepareHostedImport } from "../src/chords/hosted-impo
 import { persistChordVoicing } from "../src/chords/persisted.ts";
 import { createChordRepository, repositoryConfiguration } from "../src/chords/repository-composition.ts";
 import { D1ChordStore, HostedDataError } from "../worker/d1-repository.ts";
-import { handleApi } from "../worker/index.ts";
+import { handleApi, handleRequest } from "../worker/index.ts";
 import type { D1Database, WorkerEnv } from "../worker/types.ts";
 
 class MemoryStorage implements StoragePort { values = new Map<string, string>(); getItem(key: string): string | null { return this.values.get(key) ?? null; } setItem(key: string, value: string): void { this.values.set(key, value); } removeItem(key: string): void { this.values.delete(key); } }
@@ -18,6 +18,7 @@ const dMajor = CANONICAL_VOICINGS.find((item) => item.chordName === "D" && item.
 const cRecord = persistChordVoicing({ ...cMajor, id: "hosted-c" }, "published");
 const dRecord = persistChordVoicing({ ...dMajor, id: "hosted-d" }, "published");
 async function applyMigration(db: D1Database): Promise<void> { const sql = await readFile(new URL("../migrations/0001_initial_schema.sql", import.meta.url), "utf8"); for (const statement of sql.split(";").map((part) => part.trim()).filter(Boolean)) await db.prepare(statement).run(); }
+const adminDependencies = { authenticate: async () => ({ ok: true as const, principal: { email: "admin@example.test", subject: "admin", expiresAt: 2_000_000_000 } }) };
 
 async function database(): Promise<{ mf: Miniflare; db: D1Database; store: D1ChordStore }> {
   const mf = new Miniflare({ modules: true, script: "export default { fetch(){ return new Response('ok') } }", d1Databases: ["DB"] });
@@ -70,14 +71,45 @@ test("import dry-run is non-mutating and retry is idempotent", async () => {
   const first = await store.importRecords([cRecord], false); const retry = await store.importRecords([cRecord], false); assert.equal(first.inserted, 1); assert.equal(retry.skipped, 1); await mf.dispose();
 });
 
-test("production admin endpoints are hidden while public API returns published records", async () => {
+test("disabled production mutations stay hidden while public API remains unauthenticated", async () => {
   const { mf, db, store } = await database(); await store.publish(cRecord); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
   const publicResponse = await handleApi(new Request("https://example.test/api/chords/published"), env); assert.equal(publicResponse.status, 200); assert.equal(((await publicResponse.json()) as { records: unknown[] }).records.length, 1);
-  const mutation = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/reject`, { method: "POST" }), env); assert.equal(mutation.status, 404); await mf.dispose();
+  const mutation = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/reject`, { method: "POST" }), env, adminDependencies); assert.equal(mutation.status, 404); await mf.dispose();
 });
 
 test("API maps invalid payloads without leaking internals", async () => {
-  const { mf, db } = await database(); const response = await handleApi(new Request("https://example.test/api/admin/chords/x/publish", { method: "POST", body: "{}" }), { DB: db, ALLOW_ADMIN_MUTATIONS: "true" } as WorkerEnv); const payload = await response.json() as { error: { code: string; message: string } }; assert.equal(response.status, 400); assert.equal(payload.error.code, "INVALID_RECORD"); assert.doesNotMatch(payload.error.message, /SQL|stack/i); await mf.dispose();
+  const { mf, db } = await database(); const response = await handleApi(new Request("https://example.test/api/admin/chords/x/publish", { method: "POST", body: "{}" }), { DB: db, ALLOW_ADMIN_MUTATIONS: "true" } as WorkerEnv, adminDependencies); const payload = await response.json() as { error: { code: string; message: string } }; assert.equal(response.status, 400); assert.equal(payload.error.code, "INVALID_RECORD"); assert.doesNotMatch(payload.error.message, /SQL|stack/i); await mf.dispose();
+});
+
+test("review route and every admin endpoint reject unauthenticated requests", async () => {
+  const { mf, db } = await database(); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "true", ASSETS: { fetch: async () => new Response("private review") } } as WorkerEnv;
+  const unauthenticated = { authenticate: async () => ({ ok: false as const, status: 401 as const, code: "AUTH_REQUIRED" as const }) };
+  assert.equal((await handleRequest(new Request("https://example.test/review.html"), env, unauthenticated)).status, 401);
+  assert.equal((await handleApi(new Request("https://example.test/api/admin/audit"), env, unauthenticated)).status, 401);
+  assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/x/reject", { method: "POST" }), env, unauthenticated)).status, 401);
+  await mf.dispose();
+});
+
+test("authenticated non-admin users cannot access review or mutate", async () => {
+  const { mf, db } = await database(); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "true", ASSETS: { fetch: async () => new Response("private review") } } as WorkerEnv;
+  const ordinaryUser = { authenticate: async () => ({ ok: false as const, status: 403 as const, code: "AUTH_FORBIDDEN" as const }) };
+  assert.equal((await handleRequest(new Request("https://example.test/review.html"), env, ordinaryUser)).status, 403);
+  assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/x/reject", { method: "POST" }), env, ordinaryUser)).status, 403);
+  await mf.dispose();
+});
+
+test("authenticated administrator can load review, edit and publish with attributed audits", async () => {
+  const { mf, db, store } = await database(); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "true", ASSETS: { fetch: async () => new Response("private review") } } as WorkerEnv;
+  const review = await handleRequest(new Request("https://example.test/review.html"), env, adminDependencies); assert.equal(review.status, 200); assert.equal(review.headers.get("Cache-Control"), "no-store");
+  const publish = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/publish`, { method: "POST", body: JSON.stringify(cRecord) }), env, adminDependencies); assert.equal(publish.status, 200);
+  const edit = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/edit`, { method: "POST", body: JSON.stringify({ difficulty: 4, tags: ["Jazz"] }) }), env, adminDependencies); assert.equal(edit.status, 200);
+  const current = await store.get(cRecord.id); assert.equal(current?.difficulty, 4); assert.deepEqual(current?.tags, ["Jazz"]);
+  assert.ok((await store.auditLog()).every((entry) => entry.actor_identifier === "admin@example.test")); await mf.dispose();
+});
+
+test("logout redirects to the Cloudflare Access application logout endpoint", async () => {
+  const { mf, db } = await database(); const response = await handleApi(new Request("https://example.test/api/admin/logout"), { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv);
+  assert.equal(response.status, 302); assert.equal(response.headers.get("Location"), "https://example.test/cdn-cgi/access/logout"); await mf.dispose();
 });
 
 test("adapter selection is centralized and hosted records are runtime validated", async () => {

@@ -64,40 +64,55 @@ export class D1ChordStore {
     return statements;
   }
 
-  private audit(id: string | null, action: string, metadata: unknown = {}): D1PreparedStatement { return this.db.prepare("INSERT INTO admin_audit_log (chord_voicing_id,action,metadata_json) VALUES (?1,?2,?3)").bind(id, action, JSON.stringify(metadata)); }
+  private audit(id: string | null, action: string, actor: string, metadata: unknown = {}): D1PreparedStatement { return this.db.prepare("INSERT INTO admin_audit_log (chord_voicing_id,action,actor_identifier,metadata_json) VALUES (?1,?2,?3,?4)").bind(id, action, actor, JSON.stringify(metadata)); }
   private async atomic(statements: D1PreparedStatement[]): Promise<void> { const results = await this.db.batch(statements); if (results.some((result) => !result.success)) throw new HostedDataError("DATABASE", "Atomic chord operation failed."); }
 
-  async preReview(value: unknown): Promise<PersistedChordRecordV1> {
-    const record = this.validated(value, "pre-reviewed"); await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, "Moved to pre-reviewed")]); return record;
+  async preReview(value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
+    const record = this.validated(value, "pre-reviewed"); await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, "Moved to pre-reviewed", actor)]); return record;
   }
 
-  async publish(value: unknown): Promise<PersistedChordRecordV1> {
+  async publish(value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
     const record = this.validated(value, "published"); const hydrated = hydratePersistedChord(record); const published = await this.list("published");
     if (published.some((item) => item.id !== record.id && exactVoicingKey(hydratePersistedChord(item)) === exactVoicingKey(hydrated))) throw new HostedDataError("DUPLICATE", "An equivalent voicing is already published.");
-    await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, "Published")]); return record;
+    await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, "Published", actor)]); return record;
   }
 
-  async reject(id: string): Promise<void> {
+  async reject(id: string, actor = "system"): Promise<void> {
     const current = await this.get(id); if (!current) throw new HostedDataError("NOT_FOUND", "Chord not found.");
-    const record = { ...current, workflowStatus: "rejected" as const }; await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(id, "Rejected")]);
+    const record = { ...current, workflowStatus: "rejected" as const }; await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(id, "Rejected", actor)]);
   }
 
-  async replace(replacedId: string, value: unknown): Promise<PersistedChordRecordV1> {
+  async replace(replacedId: string, value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
     const old = await this.get(replacedId); if (!old) throw new HostedDataError("NOT_FOUND", "Replacement target not found.");
     const replacement = this.validated(value, "published"); const rejected = { ...old, workflowStatus: "rejected" as const };
-    await this.atomic([this.upsert(rejected), this.upsert(replacement), ...this.tagStatements(replacement), this.audit(replacement.id, "Replaced chord", { replacedId })]); return replacement;
+    await this.atomic([this.upsert(rejected), this.upsert(replacement), ...this.tagStatements(replacement), this.audit(replacement.id, "Replaced chord", actor, { replacedId })]); return replacement;
   }
 
-  async merge(targetId: string, value: unknown): Promise<PersistedChordRecordV1> {
+  async merge(targetId: string, value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
     const target = await this.get(targetId); if (!target) throw new HostedDataError("NOT_FOUND", "Merge target not found.");
     const source = this.validated(value, target.workflowStatus); const merged = { ...target, description: target.description || source.description, tags: [...new Set([...target.tags, ...source.tags])] };
-    await this.atomic([this.upsert(merged), ...this.tagStatements(merged), this.audit(targetId, "Merged chord metadata", { sourceId: source.id })]); return merged;
+    await this.atomic([this.upsert(merged), ...this.tagStatements(merged), this.audit(targetId, "Merged chord metadata", actor, { sourceId: source.id })]); return merged;
   }
 
-  async auditLog(): Promise<Array<{ id: number; chord_voicing_id: string | null; action: string; metadata_json: string; created_at: string }>> { const result = await this.db.prepare("SELECT id,chord_voicing_id,action,metadata_json,created_at FROM admin_audit_log ORDER BY id DESC LIMIT 500").all<{ id: number; chord_voicing_id: string | null; action: string; metadata_json: string; created_at: string }>(); return result.results; }
+  async edit(id: string, value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
+    const current = await this.get(id); if (!current) throw new HostedDataError("NOT_FOUND", "Chord not found.");
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new HostedDataError("INVALID_RECORD", "Editorial changes must be an object.");
+    const changes = value as Partial<PersistedChordRecordV1>;
+    const edited = this.validated({ ...current,
+      ...(Object.hasOwn(changes, "description") ? { description: changes.description } : {}),
+      ...(Object.hasOwn(changes, "difficulty") ? { difficulty: changes.difficulty } : {}),
+      ...(Object.hasOwn(changes, "tags") ? { tags: changes.tags } : {}),
+      ...(Object.hasOwn(changes, "displayNameOverride") ? { displayNameOverride: changes.displayNameOverride } : {}),
+      ...(Object.hasOwn(changes, "fingerPositions") ? { fingerPositions: changes.fingerPositions } : {}),
+      ...(Object.hasOwn(changes, "catalog") ? { catalog: changes.catalog } : {}),
+    }, current.workflowStatus);
+    await this.atomic([this.upsert(edited), ...this.tagStatements(edited), this.audit(id, "Edited chord metadata", actor)]); return edited;
+  }
+
+  async auditLog(): Promise<Array<{ id: number; chord_voicing_id: string | null; action: string; actor_identifier: string | null; metadata_json: string; created_at: string }>> { const result = await this.db.prepare("SELECT id,chord_voicing_id,action,actor_identifier,metadata_json,created_at FROM admin_audit_log ORDER BY id DESC LIMIT 500").all<{ id: number; chord_voicing_id: string | null; action: string; actor_identifier: string | null; metadata_json: string; created_at: string }>(); return result.results; }
   async quarantine(): Promise<Array<{ id: number; source: string; raw_json: string; issues_json: string; created_at: string }>> { const result = await this.db.prepare("SELECT id,source,raw_json,issues_json,created_at FROM quarantined_records ORDER BY id DESC LIMIT 500").all<{ id: number; source: string; raw_json: string; issues_json: string; created_at: string }>(); return result.results; }
 
-  async importRecords(values: unknown[], dryRun: boolean): Promise<HostedImportReport> {
+  async importRecords(values: unknown[], dryRun: boolean, actor = "system"): Promise<HostedImportReport> {
     const report: HostedImportReport = { inserted: 0, updated: 0, skipped: 0, duplicate: 0, quarantined: 0, failed: 0, diagnostics: [] };
     for (const value of values) {
       try {
@@ -107,7 +122,7 @@ export class D1ChordStore {
         const sameShape = (await this.list(record.workflowStatus)).some((item) => item.id !== record.id && exactVoicingKey(hydratePersistedChord(item)) === exactVoicingKey(hydratePersistedChord(record)));
         if (sameShape) { report.duplicate += 1; continue; }
         if (existing) report.updated += 1; else report.inserted += 1;
-        if (!dryRun) await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, existing ? "Imported update" : "Imported insert")]);
+        if (!dryRun) await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, existing ? "Imported update" : "Imported insert", actor)]);
       } catch (error) { report.failed += 1; report.diagnostics.push(error instanceof Error ? error.message : "Import failure"); }
     }
     return report;
