@@ -7,8 +7,8 @@
   "vars": { "ALLOW_ADMIN_MUTATIONS": "false" },
   "d1_databases": [{
     "binding": "DB",
-    "database_name": "chord-vault",
-    "database_id": "00000000-0000-0000-0000-000000000000",
+    "database_name": "chordvault",
+    "database_id": "cc3c9acf-622f-4229-b13f-58d08e49d519",
     "migrations_dir": "migrations",
     "migrations_table": "d1_migrations"
   }]
