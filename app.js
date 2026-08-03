@@ -1,13 +1,9 @@
 import { CANONICAL_VOICINGS } from './src/chords/canonical.ts';
-import { safeParseJson } from './src/chords/persisted.ts';
+import { LocalStorageChordRepository } from './src/chords/chord-repository.ts';
 import { recipeById, recipeIdFromChordName } from './src/chords/recipes.ts';
 
-function storedJson(key,fallback){
-  const raw=localStorage.getItem(key);
-  if(raw===null)return fallback;
-  const parsed=safeParseJson(raw);
-  return parsed.ok?parsed.value:fallback;
-}
+const chordRepository=new LocalStorageChordRepository(localStorage,sessionStorage);
+const repositoryWorkspace=chordRepository.loadWorkspace();
 
 function displayBarre(frets){
   const fretted=frets.filter(fret=>fret>0);
@@ -130,11 +126,10 @@ const MOOD_TAGS=new Set(['Blues','Math rock','Ambient','Warm','Bright','Dark','M
 const TAG_REPLACEMENTS={Dreamy:'Ethereal',Progressive:'Math rock','Neo soul':'Jazz',Funk:'Blues'};
 function normalizedMoodTags(tags=[]){return [...new Set(tags.map(tag=>TAG_REPLACEMENTS[tag]??tag).filter(tag=>MOOD_TAGS.has(tag)))]}
 function normalizedDisplayTags(tags=[]){return [...new Set(tags.map(tag=>TAG_REPLACEMENTS[tag]??tag).map(tag=>tag==='A-shape barre'||tag==='E-shape barre'?'Barre':tag).filter(tag=>MOOD_TAGS.has(tag)||['Essential','Open','Barre','Movable'].includes(tag)))]}
-const publishedVoicings=storedJson('chord-vault-published-voicings',[]).map(voicing=>{
+const publishedVoicings=repositoryWorkspace.published.map(voicing=>{
   const descriptorTags=normalizedDisplayTags([...(voicing.descriptorTags??[]),...(voicing.moodTags??[]),...(voicing.genreTags??[])]);
   return {...voicing,moodTags:descriptorTags.filter(tag=>MOOD_TAGS.has(tag)),genreTags:[],descriptorTags};
 });
-localStorage.setItem('chord-vault-published-voicings',JSON.stringify(publishedVoicings));
 const publishedChords=publishedVoicings.map(voicing=>({
   id:voicing.id,name:voicing.chordName,
   notes:voicing.fretPositions.map((fret,index)=>fret===null?'×':voicing.notes[voicing.fretPositions.slice(0,index+1).filter(value=>value!==null).length-1]).join(' · '),
@@ -147,15 +142,14 @@ const publishedKeys=new Set(publishedChords.map(chord=>`${chord.name}|${chord.fr
 const chordRecords=[...canonicalChords,...publishedChords.filter(chord=>!canonicalKeys.has(`${chord.name}|${chord.frets.join('-')}`)),...curatedChords.filter(chord=>!canonicalKeys.has(`${chord.name}|${chord.frets.join('-')}`)&&!publishedKeys.has(`${chord.name}|${chord.frets.join('-')}`)).map(chord=>({...chord,category:'Other Approved',displayPriority:100}))]
   .sort((left,right)=>(left.category==='Essential Open'?10:left.category==='Essential Barre'?20:100)-(right.category==='Essential Open'?10:right.category==='Essential Barre'?20:100)
     ||(left.displayPriority??999)-(right.displayPriority??999)||left.difficulty-right.difficulty||left.name.localeCompare(right.name));
-const libraryEdits=storedJson('chord-vault-library-edits',{});
+const libraryEdits=repositoryWorkspace.libraryEdits;
 const allChords=chordRecords.map((chord,index)=>{
   const libraryKey=chord.id??`curated:${chord.name}:${chord.frets.join('-')}`;
   const edit=libraryEdits[libraryKey];
   return {...chord,id:libraryKey,vaultIndex:index+1,rootKey:chordRoot(chord),qualityFamilyKey:qualityFamily(chord),recipeFamilyKey:recipeFamily(chord),difficulty:edit?.difficulty??chord.difficulty,descriptorTags:normalizedDisplayTags(edit?.descriptorTags??chord.descriptorTags??defaultDescriptorTags(chord))};
 });
-localStorage.setItem('chord-vault-public-library',JSON.stringify(allChords.map(chord=>({key:chord.id,name:chord.name,root:chord.rootKey,chordQuality:chord.chordQuality,difficulty:chord.difficulty,descriptorTags:chord.descriptorTags,frets:chord.frets,fingers:chord.fingers,source:'Main Vault'}))));
-if(localStorage.getItem('chord-vault-final-approved-keys')===null)localStorage.setItem('chord-vault-final-approved-keys','[]');
-const finalApprovedKeys=new Set(storedJson('chord-vault-final-approved-keys',[]));
+chordRepository.savePublicLibrary(allChords.map(chord=>({key:chord.id,name:chord.name,root:chord.rootKey,chordQuality:chord.chordQuality,difficulty:chord.difficulty,descriptorTags:chord.descriptorTags,frets:chord.frets,fingers:chord.fingers,source:'Main Vault'})));
+const finalApprovedKeys=new Set(repositoryWorkspace.publishedKeys);
 const chords=allChords.filter(chord=>finalApprovedKeys.has(chord.id));
 
 let activeMood = 'All';
@@ -164,7 +158,7 @@ let activeQuality = 'All';
 let activeRecipe = 'All';
 let activeDifficulty = 'All';
 let activeType = 'All';
-let saved = new Set(storedJson('chord-vault-saved',[]));
+let saved = new Set(chordRepository.listFavorites());
 let savedOnly = false;
 let pageStart = 0;
 const grid = document.querySelector('#chordGrid');
@@ -312,7 +306,7 @@ qualityFilters.addEventListener('click',event=>{const button=event.target.closes
 recipeFilters.addEventListener('click',event=>{const button=event.target.closest('[data-recipe]');if(!button)return;activeRecipe=button.dataset.recipe;pageStart=0;recipeFilters.querySelectorAll('[data-recipe]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button)});render()});
 difficultyFilters.addEventListener('click',event=>{const button=event.target.closest('[data-difficulty]');if(!button)return;activeDifficulty=button.dataset.difficulty;pageStart=0;difficultyFilters.querySelectorAll('[data-difficulty]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button)});render()});
 typeFilters.addEventListener('click',event=>{const button=event.target.closest('[data-type]');if(!button)return;activeType=button.dataset.type;pageStart=0;typeFilters.querySelectorAll('[data-type]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button)});render()});
-grid.addEventListener('click',e=>{const s=e.target.closest('[data-save]'); if(s){saved.has(s.dataset.save)?saved.delete(s.dataset.save):saved.add(s.dataset.save);localStorage.setItem('chord-vault-saved',JSON.stringify([...saved]));render();return} const p=e.target.closest('[data-play]'); if(p) playChord(chords.find(c=>c.name===p.dataset.play),p)});
+grid.addEventListener('click',e=>{const s=e.target.closest('[data-save]'); if(s){if(saved.has(s.dataset.save)){saved.delete(s.dataset.save);chordRepository.removeFavorite(s.dataset.save)}else{saved.add(s.dataset.save);chordRepository.addFavorite(s.dataset.save)}render();return} const p=e.target.closest('[data-play]'); if(p) playChord(chords.find(c=>c.name===p.dataset.play),p)});
 document.querySelector('#savedButton').addEventListener('click',()=>{savedOnly=!savedOnly;pageStart=0;render()});
 function goToPage(page){pageStart=(page-1)*12;render();grid.scrollIntoView({behavior:'smooth',block:'start'})}
 previousPage.addEventListener('click',()=>goToPage(Math.max(1,pageStart/12)));

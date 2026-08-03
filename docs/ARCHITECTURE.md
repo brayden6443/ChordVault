@@ -16,6 +16,18 @@ The review page performs an additive, one-time migration to `chord-vault-persist
 
 This phase does not make the new envelope the live repository and does not introduce a backend. Authentication, a hosted repository, favorites, collections, exports, and additional recipes remain later planned phases. That boundary keeps this schema work reversible and avoids abstractions those features do not yet require.
 
+## Chord repository boundary
+
+`src/chords/chord-repository.ts` now owns browser persistence and workflow coordination. The public and review pages use the `ChordRepository` contract instead of knowing individual chord storage keys. `LocalStorageChordRepository` is the first adapter; it continues reading and writing the existing legacy-compatible keys while also maintaining the versioned Step 2 record envelope.
+
+Repository operations cover the workflows that exist today: candidate queues, editorial changes, movement into pre-review, publishing, rejection, review-later decisions, duplicate replacement and metadata merge, public approval keys, favorites, audit entries, backups, and quarantine reports. Theme preference remains a direct UI setting because it is not chord data.
+
+Every chord record crossing the repository is migrated and validated through the versioned schema. Malformed legacy values fall back safely and are copied to quarantine with diagnostics. Existing migration backups are preserved and no legacy key is destructively removed.
+
+For multi-key changes, the local adapter first validates the complete proposed workspace, stores a raw rollback snapshot, writes the compatible keys and V1 envelope, then removes the staged snapshot. If a write fails, it restores the exact previous values. This is best-effort rollback coordination over browser storage, not a true database transaction. Repository errors distinguish validation, corrupt/unknown data, duplicate conflicts, missing records, write failures, and rollback failures while exposing a safe UI message.
+
+Favorites are routed through the repository but intentionally remain keyed by chord name. Stable favorite identity is deferred to the planned identity remediation phase so this repository step does not change current behavior.
+
 ## Executive summary
 
 Chord Vault is a small, static, browser-only Vite application. Its deterministic music-theory and generation modules are the strongest part of the system: they are separated by responsibility and covered by 17 passing unit tests. The public vault and private review workflow are not yet production-safe because the browser is also the database and the `/review.html` page has no authentication or authorization.
