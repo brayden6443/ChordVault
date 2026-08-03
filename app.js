@@ -90,14 +90,14 @@ function inferredFingers(frets,provided=[]){
 }
 
 const curatedChords = [
-  {name:'Emaj9', notes:'E · B · D♯ · G♯ · F♯', desc:'A glassy open voicing with just enough color to feel unresolved.', moods:['Dreamy','Warm'], style:'Neo soul', difficulty:2, frets:[0,2,1,1,0,2], fingers:['','2','1','1','','3'], tones:[82.41,123.47,155.56,207.65,246.94,369.99]},
-  {name:'Bm11', notes:'× · B · D · A · B · E', desc:'Wide, melancholy and effortless—ideal for a ringing clean part.', moods:['Dreamy','Dark'], style:'Ambient', difficulty:1, frets:[-1,2,0,2,0,0], fingers:['','1','','2','',''], tones:[123.47,146.83,220,246.94,329.63]},
-  {name:'Fmaj7♯11', notes:'F · × · E · A · B · E', desc:'Luminous tension from the open B and E strings over a low F.', moods:['Tense','Dreamy'], style:'Jazz', difficulty:2, frets:[1,-1,2,2,0,0], fingers:['1','','2','3','',''], tones:[87.31,164.81,220,246.94,329.63]},
-  {name:'Em9', notes:'E · B · D · G · B · F♯', desc:'A huge minor-nine that sounds expensive with almost no effort.', moods:['Dark','Open'], style:'Progressive', difficulty:1, frets:[0,2,0,0,0,2], fingers:['','1','','','','2'], tones:[82.41,123.47,146.83,196,246.94,369.99]},
-  {name:'G6/9', notes:'G · A · D · A · B · E', desc:'Bright and spacious, with open strings that keep every note breathing.', moods:['Warm','Open'], style:'Math rock', difficulty:1, frets:[3,0,0,2,0,0], fingers:['2','','','1','',''], tones:[98,110,146.83,220,246.94,329.63]},
-  {name:'C♯m7', notes:'× · C♯ · G♯ · B · E · G♯', desc:'Compact and smooth, with a soft top voice made for sliding transitions.', moods:['Dark','Warm'], style:'Neo soul', difficulty:3, frets:[-1,4,6,4,5,4], fingers:['','1','3','1','2','1'], tones:[138.59,207.65,246.94,329.63,415.3]},
-  {name:'Dmaj9/A', notes:'A · D · F♯ · C♯ · E · A', desc:'A dense, polished major-nine with the fifth anchoring the bass.', moods:['Dreamy','Warm'], style:'Jazz', difficulty:4, frets:[5,5,4,6,5,5], fingers:['2','2','1','4','3','2'], tones:[110,146.83,185,277.18,329.63,440]},
-  {name:'B11', notes:'× · B · E · A · C♯ · F♯', desc:'Suspended dominant energy that wants to fall home to E.', moods:['Tense','Open'], style:'Funk', difficulty:2, frets:[-1,2,2,2,2,2], fingers:['','1','1','1','1','1'], tones:[123.47,164.81,220,277.18,369.99]}
+  {name:'Emaj9', notes:'E · B · D♯ · G♯ · F♯', desc:'A glassy open voicing with just enough color to feel unresolved.', moods:['Ethereal','Warm'], style:'Jazz', difficulty:2, frets:[0,2,1,1,0,2], fingers:['','2','1','1','','3'], tones:[82.41,123.47,155.56,207.65,246.94,369.99]},
+  {name:'Bm11', notes:'× · B · D · A · B · E', desc:'Wide, melancholy and effortless—ideal for a ringing clean part.', moods:['Melancholic','Dark'], style:'Ambient', difficulty:1, frets:[-1,2,0,2,0,0], fingers:['','1','','2','',''], tones:[123.47,146.83,220,246.94,329.63]},
+  {name:'Fmaj7♯11', notes:'F · × · E · A · B · E', desc:'Luminous tension from the open B and E strings over a low F.', moods:['Tense','Ethereal'], style:'Jazz', difficulty:2, frets:[1,-1,2,2,0,0], fingers:['1','','2','3','',''], tones:[87.31,164.81,220,246.94,329.63]},
+  {name:'Em9', notes:'E · B · D · G · B · F♯', desc:'A huge minor-nine that sounds expensive with almost no effort.', moods:['Dark','Ambient'], style:'Math rock', difficulty:1, frets:[0,2,0,0,0,2], fingers:['','1','','','','2'], tones:[82.41,123.47,146.83,196,246.94,369.99]},
+  {name:'G6/9', notes:'G · A · D · A · B · E', desc:'Bright and spacious, with open strings that keep every note breathing.', moods:['Warm','Bright'], style:'Math rock', difficulty:1, frets:[3,0,0,2,0,0], fingers:['2','','','1','',''], tones:[98,110,146.83,220,246.94,329.63]},
+  {name:'C♯m7', notes:'× · C♯ · G♯ · B · E · G♯', desc:'Compact and smooth, with a soft top voice made for sliding transitions.', moods:['Dark','Warm'], style:'Jazz', difficulty:3, frets:[-1,4,6,4,5,4], fingers:['','1','3','1','2','1'], tones:[138.59,207.65,246.94,329.63,415.3]},
+  {name:'Dmaj9/A', notes:'A · D · F♯ · C♯ · E · A', desc:'A dense, polished major-nine with the fifth anchoring the bass.', moods:['Ethereal','Warm'], style:'Jazz', difficulty:4, frets:[5,5,4,6,5,5], fingers:['2','2','1','4','3','2'], tones:[110,146.83,185,277.18,329.63,440]},
+  {name:'B11', notes:'× · B · E · A · C♯ · F♯', desc:'Suspended dominant energy that wants to fall home to E.', moods:['Tense','Aggressive'], style:'Blues', difficulty:2, frets:[-1,2,2,2,2,2], fingers:['','1','1','1','1','1'], tones:[123.47,164.81,220,277.18,369.99]}
 ];
 
 const canonicalBase=CANONICAL_VOICINGS.map(voicing=>({
@@ -117,11 +117,19 @@ const canonicalChords=canonicalBase.map(chord=>{
   return curated?{...chord,...curated,chordQuality:chord.chordQuality,root:chord.root,isEssential:true,isCanonical:true,category:chord.category,displayPriority:chord.displayPriority,movable:chord.movable,shapeFamily:chord.shapeFamily}:chord;
 });
 const canonicalKeys=new Set(canonicalChords.map(chord=>`${chord.name}|${chord.frets.join('-')}`));
-const publishedVoicings=JSON.parse(localStorage.getItem('chord-vault-published-voicings')||'[]');
+const MOOD_TAGS=new Set(['Blues','Math rock','Ambient','Warm','Bright','Dark','Melancholic','Tense','Aggressive','Jazz','Ethereal']);
+const TAG_REPLACEMENTS={Dreamy:'Ethereal',Progressive:'Math rock','Neo soul':'Jazz',Funk:'Blues'};
+function normalizedMoodTags(tags=[]){return [...new Set(tags.map(tag=>TAG_REPLACEMENTS[tag]??tag).filter(tag=>MOOD_TAGS.has(tag)))]}
+function normalizedDisplayTags(tags=[]){return [...new Set(tags.map(tag=>TAG_REPLACEMENTS[tag]??tag).map(tag=>tag==='A-shape barre'||tag==='E-shape barre'?'Barre':tag).filter(tag=>MOOD_TAGS.has(tag)||['Essential','Open','Barre','Movable'].includes(tag)))]}
+const publishedVoicings=JSON.parse(localStorage.getItem('chord-vault-published-voicings')||'[]').map(voicing=>{
+  const descriptorTags=normalizedDisplayTags([...(voicing.descriptorTags??[]),...(voicing.moodTags??[]),...(voicing.genreTags??[])]);
+  return {...voicing,moodTags:descriptorTags.filter(tag=>MOOD_TAGS.has(tag)),genreTags:[],descriptorTags};
+});
+localStorage.setItem('chord-vault-published-voicings',JSON.stringify(publishedVoicings));
 const publishedChords=publishedVoicings.map(voicing=>({
   id:voicing.id,name:voicing.chordName,
   notes:voicing.fretPositions.map((fret,index)=>fret===null?'×':voicing.notes[voicing.fretPositions.slice(0,index+1).filter(value=>value!==null).length-1]).join(' · '),
-  moods:voicing.moodTags??[],style:voicing.genreTags?.[0]??'Approved',difficulty:voicing.difficulty,
+  moods:normalizedMoodTags([...(voicing.moodTags??[]),...(voicing.genreTags??[])]),style:normalizedMoodTags(voicing.genreTags??[])[0]??'Approved',difficulty:voicing.difficulty,
   frets:voicing.fretPositions.map(fret=>fret??-1),fingers:inferredFingers(voicing.fretPositions.map(fret=>fret??-1),voicing.fingerPositions??[]),
   tones:voicing.fretPositions.flatMap((fret,index)=>fret===null?[]:[440*2**((voicing.tuning.strings[index].midi+fret-69)/12)]),
   chordQuality:voicing.chordQuality,root:voicing.root,category:'Other Approved',displayPriority:100,movable:voicing.movable??false,descriptorTags:voicing.descriptorTags,
@@ -134,7 +142,7 @@ const libraryEdits=JSON.parse(localStorage.getItem('chord-vault-library-edits')|
 const allChords=chordRecords.map((chord,index)=>{
   const libraryKey=chord.id??`curated:${chord.name}:${chord.frets.join('-')}`;
   const edit=libraryEdits[libraryKey];
-  return {...chord,id:libraryKey,vaultIndex:index+1,rootKey:chordRoot(chord),qualityFamilyKey:qualityFamily(chord),recipeFamilyKey:recipeFamily(chord),difficulty:edit?.difficulty??chord.difficulty,descriptorTags:edit?.descriptorTags??chord.descriptorTags??defaultDescriptorTags(chord)};
+  return {...chord,id:libraryKey,vaultIndex:index+1,rootKey:chordRoot(chord),qualityFamilyKey:qualityFamily(chord),recipeFamilyKey:recipeFamily(chord),difficulty:edit?.difficulty??chord.difficulty,descriptorTags:normalizedDisplayTags(edit?.descriptorTags??chord.descriptorTags??defaultDescriptorTags(chord))};
 });
 localStorage.setItem('chord-vault-public-library',JSON.stringify(allChords.map(chord=>({key:chord.id,name:chord.name,root:chord.rootKey,chordQuality:chord.chordQuality,difficulty:chord.difficulty,descriptorTags:chord.descriptorTags,frets:chord.frets,fingers:chord.fingers,source:'Main Vault'}))));
 if(localStorage.getItem('chord-vault-final-approved-keys')===null)localStorage.setItem('chord-vault-final-approved-keys','[]');
@@ -261,7 +269,7 @@ function matchesChordType(chord){
 }
 
 function filteredChords(){
-  return chords.filter(c=>(activeMood==='All'||c.moods.includes(activeMood))
+  return chords.filter(c=>(activeMood==='All'||c.descriptorTags.includes(activeMood))
     &&(activeRoot==='All'||c.rootKey===activeRoot)
     &&(activeQuality==='All'||c.qualityFamilyKey===activeQuality)
     &&(activeRecipe==='All'||c.recipeFamilyKey===activeRecipe)

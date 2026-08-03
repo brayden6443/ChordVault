@@ -21,6 +21,14 @@ const RECIPES = [
   { id: "min11", label: "Minor 11", suffix: "m11", requiredTones: [0, 3, 10], optionalTones: [2, 5, 7] },
 ];
 
+const REVIEW_TAGS = ["Blues", "Math rock", "Ambient", "Warm", "Bright", "Dark", "Melancholic", "Tense", "Aggressive", "Jazz", "Ethereal"];
+const STRUCTURAL_TAGS = ["Essential", "Open", "Barre", "Movable"];
+const TAG_REPLACEMENTS: Record<string, string> = { Dreamy: "Ethereal", Progressive: "Math rock", "Neo soul": "Jazz", Funk: "Blues", "A-shape barre": "Barre", "E-shape barre": "Barre" };
+function normalizedDescriptorTags(tags: string[]): string[] {
+  const allowed = new Set([...STRUCTURAL_TAGS, ...REVIEW_TAGS]);
+  return [...new Set(tags.map((tag) => TAG_REPLACEMENTS[tag] ?? tag).filter((tag) => allowed.has(tag)))];
+}
+
 type SavedReview = Pick<ChordVoicing, "approvalStatus" | "chordName" | "moodTags" | "genreTags" | "description" | "difficulty" | "descriptorTags">;
 const savedReviews: Record<string, SavedReview> = JSON.parse(localStorage.getItem("chord-vault-reviews") ?? "{}");
 let approvedVault: ChordVoicing[] = JSON.parse(localStorage.getItem("chord-vault-approved-voicings") ?? "[]");
@@ -35,6 +43,25 @@ const fallbackPublicLibrary: LibraryItem[] = CANONICAL_VOICINGS.map((voicing) =>
 const publicLibrary: LibraryItem[] = (JSON.parse(localStorage.getItem("chord-vault-public-library") ?? "null") ?? fallbackPublicLibrary)
   .map((item: LibraryItem) => ({ ...item, source: finalApprovedKeys.has(item.key) ? "Main Vault" : "Unapproved" }));
 const libraryEdits: Record<string, { difficulty?: number; descriptorTags?: string[] }> = JSON.parse(localStorage.getItem("chord-vault-library-edits") ?? "{}");
+function migrateLegacyTags(): void {
+  const migrateVoicing = (voicing: ChordVoicing) => {
+    const descriptive = normalizedDescriptorTags([...(voicing.descriptorTags ?? []), ...voicing.moodTags, ...voicing.genreTags]);
+    return { ...voicing, moodTags: descriptive.filter((tag) => REVIEW_TAGS.includes(tag)), genreTags: [], descriptorTags: descriptive };
+  };
+  approvedVault = approvedVault.map(migrateVoicing);
+  publishedVault = publishedVault.map(migrateVoicing);
+  Object.values(savedReviews).forEach((review) => {
+    const descriptive = normalizedDescriptorTags([...(review.descriptorTags ?? []), ...review.moodTags, ...review.genreTags]);
+    review.moodTags = descriptive.filter((tag) => REVIEW_TAGS.includes(tag)); review.genreTags = []; review.descriptorTags = descriptive;
+  });
+  Object.values(libraryEdits).forEach((edit) => { if (edit.descriptorTags) edit.descriptorTags = normalizedDescriptorTags(edit.descriptorTags); });
+  localStorage.setItem("chord-vault-approved-voicings", JSON.stringify(approvedVault));
+  localStorage.setItem("chord-vault-published-voicings", JSON.stringify(publishedVault));
+  localStorage.setItem("chord-vault-reviews", JSON.stringify(savedReviews));
+  localStorage.setItem("chord-vault-library-edits", JSON.stringify(libraryEdits));
+  localStorage.setItem("chord-vault-tag-schema", "2");
+}
+if (localStorage.getItem("chord-vault-tag-schema") !== "2") migrateLegacyTags();
 let activeLibrarySource = "All";
 let libraryPage = 0;
 let candidates: ChordVoicing[] = [];
@@ -147,7 +174,6 @@ function render(): void {
   reviewCard.innerHTML = `<div class="candidate-layout">
     <div class="candidate-visual"><h2>${escapeHtml(voicing.chordName)}</h2><p>${escapeHtml(voicing.tuning.name)}</p>${diagram(voicing)}</div>
     <div class="candidate-details">
-      <div class="score-line"><span>Profile-adjusted score</span><strong>${voicing.qualityScore}</strong></div>
       <div class="detail-grid">
         <div><span>Notes</span><strong>${voicing.notes.join(" · ")}</strong></div>
         <div><span>Intervals</span><strong>${voicing.intervals.map(intervalLabel).join(" · ")}</strong></div>
@@ -155,8 +181,6 @@ function render(): void {
         <div><span>Inversion</span><strong>${voicing.inversion}</strong></div>
         <div><span>Frets</span><strong>${voicing.fretPositions.map((fret) => fret ?? "×").join(" · ")}</strong></div>
         <div><span>Difficulty</span><strong>${voicing.difficulty} / 5</strong></div>
-        <div><span>Theory score</span><strong>${voicing.generatorQualityScore ?? voicing.qualityScore}</strong></div>
-        <div><span>C taste fit</span><strong>${voicing.curationFitScore ?? 0} / 100</strong></div>
       </div>
       <div class="editor-grid">
         <label class="editor-field">Chord name<input id="editName" value="${escapeHtml(voicing.chordName)}" /></label>
@@ -282,6 +306,7 @@ function normalizeImportedVoicing(raw: Record<string, unknown>, index: number): 
   const fingers = Array.isArray(raw.fingerPositions) ? raw.fingerPositions : String(raw.fingerPositions ?? "").split(" ");
   const fingerPositions = fretPositions.map((fret, stringIndex) => fret && Number(fingers[stringIndex]) ? Number(fingers[stringIndex]) : null);
   const shapeKey = `${STANDARD_TUNING.id}|${root}|${chordQuality}|${fretPositions.map((fret) => fret ?? "x").join("-")}`;
+  const descriptorTags = normalizedDescriptorTags([...importedArray(raw.descriptorTags), ...importedArray(raw.moodTags), ...importedArray(raw.genreTags)]);
   const zeroBreakdown = { harmonicCompleteness: 0, playability: 0, usefulBass: 0, openStrings: 0, extensions: 0, uniqueness: 0, fretSpanPenalty: 0, muddyIntervalPenalty: 0, duplicateNotePenalty: 0 };
   return {
     id: String(raw.id || `imported_${importHash(shapeKey)}`), slug: String(raw.slug || `${chordName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${importHash(shapeKey)}`),
@@ -289,7 +314,7 @@ function normalizeImportedVoicing(raw: Record<string, unknown>, index: number): 
     notes: pitches.map((pitch) => pitch.note), intervals, bassNote: bass?.note ?? "", inversion: inversionForPitches(pitches, root), alternateNames: [],
     fretSpan: fretSpanFor(fretPositions), openStringCount: fretPositions.filter((fret) => fret === 0).length,
     difficulty: Math.max(1, Math.min(5, Number(raw.difficulty) || 3)) as 1 | 2 | 3 | 4 | 5,
-    moodTags: importedArray(raw.moodTags), genreTags: importedArray(raw.genreTags), descriptorTags: importedArray(raw.descriptorTags),
+    moodTags: descriptorTags.filter((tag) => REVIEW_TAGS.includes(tag)), genreTags: [], descriptorTags,
     description: String(raw.description ?? ""), qualityScore: Number(raw.qualityScore) || 0,
     scoreBreakdown: typeof raw.scoreBreakdown === "object" && raw.scoreBreakdown ? raw.scoreBreakdown as ChordVoicing["scoreBreakdown"] : zeroBreakdown,
     approvalStatus: "approved", possibleBarres: [],
@@ -435,7 +460,7 @@ function approvedLibraryItems(): LibraryItem[] {
   return approvedVault.map((voicing) => ({
     key: voicing.id, name: voicing.chordName, difficulty: voicing.difficulty, source: "Pre-reviewed",
     frets: voicing.fretPositions.map((fret) => fret ?? -1), fingers: (voicing.fingerPositions ?? []).map((finger) => finger ? String(finger) : ""),
-    descriptorTags: voicing.descriptorTags ?? [...new Set([...voicing.moodTags, ...voicing.genreTags])],
+    descriptorTags: normalizedDescriptorTags(voicing.descriptorTags ?? [...new Set([...voicing.moodTags, ...voicing.genreTags])]),
   }));
 }
 
@@ -453,14 +478,11 @@ function allLibraryItems(): LibraryItem[] {
 
 function editedLibraryItem(item: LibraryItem): LibraryItem {
   const edit = libraryEdits[item.key];
-  return { ...item, difficulty: edit?.difficulty ?? item.difficulty, descriptorTags: edit?.descriptorTags ?? item.descriptorTags };
+  return { ...item, difficulty: edit?.difficulty ?? item.difficulty, descriptorTags: normalizedDescriptorTags(edit?.descriptorTags ?? item.descriptorTags) };
 }
 
 function tagVocabulary(): string[] {
-  return [...new Set([
-    "Essential", "Open", "Barre", "Movable", "Dreamy", "Dark", "Warm", "Tense", "Ambient", "Jazz", "Neo soul", "Funk",
-    ...[...publicLibrary, ...approvedLibraryItems()].flatMap((item) => editedLibraryItem(item).descriptorTags),
-  ])].sort((left, right) => left.localeCompare(right));
+  return [...STRUCTURAL_TAGS, ...REVIEW_TAGS];
 }
 
 function persistLibraryEdit(item: LibraryItem, update: { difficulty?: number; descriptorTags?: string[] }): void {
