@@ -1,8 +1,8 @@
 import { CANONICAL_VOICINGS } from './src/chords/canonical.ts';
-import { LocalStorageChordRepository } from './src/chords/chord-repository.ts';
+import { createChordRepository } from './src/chords/repository-composition.ts';
 import { recipeById, recipeIdFromChordName } from './src/chords/recipes.ts';
 
-const chordRepository=new LocalStorageChordRepository(localStorage,sessionStorage);
+const {repository:chordRepository,capabilities:repositoryCapabilities}=await createChordRepository({localStorage,sessionStorage,env:import.meta.env});
 const repositoryWorkspace=chordRepository.loadWorkspace();
 
 function displayBarre(frets){
@@ -151,6 +151,7 @@ const allChords=chordRecords.map((chord,index)=>{
 chordRepository.savePublicLibrary(allChords.map(chord=>({key:chord.id,name:chord.name,root:chord.rootKey,chordQuality:chord.chordQuality,difficulty:chord.difficulty,descriptorTags:chord.descriptorTags,frets:chord.frets,fingers:chord.fingers,source:'Main Vault'})));
 const finalApprovedKeys=new Set(repositoryWorkspace.publishedKeys);
 const chords=allChords.filter(chord=>finalApprovedKeys.has(chord.id));
+if(repositoryCapabilities.loadError){const status=document.querySelector('#resultCount');if(status)status.textContent=repositoryCapabilities.loadError}
 
 let activeMood = 'All';
 let activeRoot = 'All';

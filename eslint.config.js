@@ -20,6 +20,6 @@ export default tseslint.config(
   },
   ...tseslint.configs.recommended.map((configuration) => ({
     ...configuration,
-    files: ["src/**/*.ts", "tests/**/*.ts"],
+    files: ["src/**/*.ts", "tests/**/*.ts", "worker/**/*.ts", "scripts/**/*.ts"],
   })),
 );

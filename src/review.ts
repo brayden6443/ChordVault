@@ -6,14 +6,14 @@ import { generateBatch, generateVoicings } from "./chords/generator.ts";
 import { bassPitch, intervalLabel, intervalsRelativeToRoot, inversionForPitches, pitchesForVoicing } from "./chords/theory.ts";
 import { fretSpanFor } from "./chords/playability.ts";
 import { exactVoicingKey } from "./chords/identity.ts";
-import { LocalStorageChordRepository } from "./chords/chord-repository.ts";
+import { createChordRepository } from "./chords/repository-composition.ts";
 import { CHORD_SCHEMA_VERSION, hydratePersistedChord, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./chords/persisted.ts";
 import { generatorRecipes, recipeById, recipeIdFromChordName } from "./chords/recipes.ts";
 import { STANDARD_TUNING, type ApprovalStatus, type ChordVoicing } from "./chords/types.ts";
 
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const RECIPES = generatorRecipes();
-const chordRepository = new LocalStorageChordRepository(localStorage, sessionStorage);
+const { repository: chordRepository, capabilities: repositoryCapabilities } = await createChordRepository({ localStorage, sessionStorage, env: import.meta.env });
 const initialWorkspace = chordRepository.loadWorkspace();
 
 const REVIEW_TAGS = ["Blues", "Math rock", "Ambient", "Warm", "Bright", "Dark", "Melancholic", "Tense", "Aggressive", "Jazz", "Ethereal"];
@@ -51,7 +51,7 @@ function migrateLegacyTags(): void {
   Object.values(libraryEdits).forEach((edit) => { if (edit.descriptorTags) edit.descriptorTags = normalizedDescriptorTags(edit.descriptorTags); });
   chordRepository.applyLegacyTagMigration(approvedVault, publishedVault, savedReviews, libraryEdits);
 }
-migrateLegacyTags();
+if (repositoryCapabilities.mutations) migrateLegacyTags();
 let activeLibrarySource = "All";
 let libraryPage = 0;
 let candidates: ChordVoicing[] = [];
@@ -70,6 +70,7 @@ const recipeSelect = byId<HTMLSelectElement>("recipeSelect");
 const retainInput = byId<HTMLInputElement>("retainInput");
 const reviewCard = byId<HTMLElement>("reviewCard");
 const batchStatus = byId<HTMLElement>("batchStatus");
+if (!repositoryCapabilities.mutations) batchStatus.textContent = "Hosted publishing is disabled until administrator authentication is installed. Local review data remains available, but production changes cannot be published.";
 
 candidates = initialWorkspace.candidates;
 
