@@ -82,7 +82,7 @@ function generateWithStats(input: GenerationConfig): { voicings: ChordVoicing[];
     allowOpen: input.allowOpen ?? true,
   };
   if (config.fretMin > config.fretMax) throw new Error("fretMin cannot exceed fretMax");
-  if (config.tuning.strings.length === 0) return [];
+  if (config.tuning.strings.length === 0) return { voicings: [], examined: 0, rejected: 0 };
 
   const optionSets = config.tuning.strings.map((_, index) => optionsForString(config, index));
   const maxRawCandidates = input.maxRawCandidates ?? 50_000;

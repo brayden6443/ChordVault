@@ -352,7 +352,7 @@ function playChord(chord,button){
   beginPlayCooldown();
   audioContext??=new AudioCtx();
   if(audioContext.state==='suspended')audioContext.resume();
-  activeOscillators.forEach(oscillator=>{try{oscillator.stop()}catch{}});
+  activeOscillators.forEach(oscillator=>{try{oscillator.stop()}catch{/* The oscillator may already be stopped. */}});
   activeOscillators=[];
   activePlayButton?.classList.remove('playing');
   activePlayButton=button;

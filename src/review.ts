@@ -337,7 +337,7 @@ function advance(direction: number): void {
 async function play(voicing: ChordVoicing): Promise<void> {
   audioContext ??= new AudioContext();
   await audioContext.resume();
-  activeSources.forEach((source) => { try { source.stop(); } catch {} });
+  activeSources.forEach((source) => { try { source.stop(); } catch { /* The source may already be stopped. */ } });
   activeSources = [];
   voicing.fretPositions.forEach((fret, index) => {
     if (fret === null) return;
@@ -590,12 +590,12 @@ function itemForCard(card: HTMLElement): LibraryItem | undefined {
 }
 
 libraryGrid.addEventListener("change", (event) => {
-  const target = event.target as HTMLSelectElement;
+  const target = event.target as HTMLInputElement | HTMLSelectElement;
   const card = target.closest<HTMLElement>("[data-library-key]");
   if (!card) return;
   const item = itemForCard(card);
   if (!item) return;
-  if (target.classList.contains("library-select-box")) { target.checked ? selectedLibraryKeys.add(item.key) : selectedLibraryKeys.delete(item.key); return; }
+  if (target instanceof HTMLInputElement && target.classList.contains("library-select-box")) { if (target.checked) selectedLibraryKeys.add(item.key); else selectedLibraryKeys.delete(item.key); return; }
   if (target.classList.contains("library-difficulty")) persistLibraryEdit(item, { difficulty: Number(target.value) });
   if (target.classList.contains("tag-picker") && target.value) {
     const edited = editedLibraryItem(item);
@@ -679,7 +679,7 @@ function renderAudit(): void { const target = document.getElementById("auditList
 
 const bulkTag = byId<HTMLSelectElement>("bulkTag");
 bulkTag.innerHTML += tagVocabulary().map((tag) => `<option>${escapeHtml(tag)}</option>`).join("");
-byId<HTMLInputElement>("selectVisible").addEventListener("change", (event) => { const checked = (event.target as HTMLInputElement).checked; libraryGrid.querySelectorAll<HTMLInputElement>(".library-select-box").forEach((box) => { box.checked = checked; const card = box.closest<HTMLElement>("[data-library-key]"); if (card) checked ? selectedLibraryKeys.add(decodeURIComponent(card.dataset.libraryKey!)) : selectedLibraryKeys.delete(decodeURIComponent(card.dataset.libraryKey!)); }); });
+byId<HTMLInputElement>("selectVisible").addEventListener("change", (event) => { const checked = (event.target as HTMLInputElement).checked; libraryGrid.querySelectorAll<HTMLInputElement>(".library-select-box").forEach((box) => { box.checked = checked; const card = box.closest<HTMLElement>("[data-library-key]"); if (!card) return; const key = decodeURIComponent(card.dataset.libraryKey!); if (checked) selectedLibraryKeys.add(key); else selectedLibraryKeys.delete(key); }); });
 byId<HTMLSelectElement>("bulkDifficulty").addEventListener("change", (event) => { const level = Number((event.target as HTMLSelectElement).value); if (!level) return; [...publicLibrary, ...approvedLibraryItems()].filter((item) => selectedLibraryKeys.has(item.key)).forEach((item) => persistLibraryEdit(item, { difficulty: level })); audit("Bulk difficulty edit", `${selectedLibraryKeys.size} chords`); renderLibraryEditor(); });
 bulkTag.addEventListener("change", () => { if (!bulkTag.value) return; [...publicLibrary, ...approvedLibraryItems()].filter((item) => selectedLibraryKeys.has(item.key)).forEach((item) => persistLibraryEdit(item, { descriptorTags: [...new Set([...editedLibraryItem(item).descriptorTags, bulkTag.value])] })); audit("Bulk tag added", `${bulkTag.value} to ${selectedLibraryKeys.size} chords`); renderLibraryEditor(); });
 byId("bulkLater").addEventListener("click", () => { selectedLibraryKeys.forEach((key) => reviewLater.add(key)); localStorage.setItem("chord-vault-review-later", JSON.stringify([...reviewLater])); audit("Bulk saved for later", `${selectedLibraryKeys.size} chords`); renderLibraryEditor(); });
