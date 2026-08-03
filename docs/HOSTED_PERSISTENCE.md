@@ -1,11 +1,14 @@
 # Hosted persistence operations
 
-Chord Vault Step 4 uses Cloudflare D1 through the Worker in `worker/index.ts`. Browser code never receives a D1 credential or binding. Production public reads may use D1; production mutations remain disabled until Step 5 authentication is installed.
+Chord Vault uses Cloudflare D1 through the Worker in `worker/index.ts`. Browser code never receives a D1 credential, binding, Access audience, or administrator allowlist. Public reads are anonymous and published-only. Review assets and administrator APIs require a verified Cloudflare Access identity.
 
 ## Configuration
 
 - Worker binding `DB`: the D1 database. Replace the placeholder `database_id` in `wrangler.jsonc` after creating the production database.
-- Worker variable `ALLOW_ADMIN_MUTATIONS`: `false` in committed production configuration. Use `true` only in `.dev.vars` for isolated local development. This is a temporary Step 4 safety switch, not authentication.
+- Worker variable `ALLOW_ADMIN_MUTATIONS`: remains `false` in committed production configuration. Set it to `true` only after Access is configured and verified; it is a second operational lock, not authentication.
+- Worker secret `ACCESS_TEAM_DOMAIN`: the full HTTPS Cloudflare Access team domain.
+- Worker secret `ACCESS_AUD`: the self-hosted Access application's Audience (AUD) tag.
+- Worker secret `ADMIN_EMAILS`: a comma-separated, exact email allowlist. Keep the Access policy and this list aligned.
 - Client variable `VITE_CHORD_REPOSITORY`: `local` or `hosted`.
 - Client variable `VITE_CHORD_API_BASE`: defaults to `/api`.
 - Wrangler credentials such as `CLOUDFLARE_API_TOKEN` belong in the operator environment, never `.env` or browser code.
@@ -23,7 +26,18 @@ npx wrangler dev
 
 Wrangler creates the isolated local D1 state beneath ignored `.wrangler/`. Migration `0001_initial_schema.sql` is applied in filename order and recorded by Wrangler in `d1_migrations`. Startup code never applies schema changes.
 
-Use `.dev.vars` with `ALLOW_ADMIN_MUTATIONS=true` only when local mutation testing is intentional. Without that opt-in, admin endpoints return `404`.
+Use `.dev.vars` placeholders for isolated local testing only. Without valid Access configuration the private route fails closed; without `ALLOW_ADMIN_MUTATIONS=true`, authenticated mutation endpoints return `404`.
+
+## Cloudflare Access setup
+
+1. In Cloudflare Zero Trust, add a self-hosted Access application covering the deployed hostname paths `/review`, `/review/*`, and `/api/admin/*`.
+2. Add an Allow policy containing only the intended administrator email addresses. Do not use a Bypass policy for these paths.
+3. Copy the application Audience (AUD) tag and team domain into encrypted Worker secrets named `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN`.
+4. Store the same exact administrator emails as the encrypted `ADMIN_EMAILS` Worker secret.
+5. Verify an anonymous request is blocked, an authenticated non-admin is denied, and an allowlisted administrator can load `/review.html` and `/api/admin/session`.
+6. Only after those checks, set `ALLOW_ADMIN_MUTATIONS=true` as a Worker variable and verify one reversible edit. Do not place any of these values in Vite variables or client JavaScript.
+
+Cloudflare Access controls session duration in its application policy. Expired, revoked, wrongly issued, wrongly signed, or non-allowlisted sessions fail closed in the Worker. The review-page logout link goes to the application-domain `/cdn-cgi/access/logout` endpoint.
 
 ## Production database and migrations
 
@@ -82,24 +96,31 @@ npm run hosted:import -- --input chord-vault-workspace.json --api http://127.0.0
 
 The tool validates and recalculates every record, preserves valid stable IDs, reports validation failures, creates the backup before upload, and never deletes local data. Production import remains unavailable while `ALLOW_ADMIN_MUTATIONS=false`.
 
-## API exposure before Step 5
+## API exposure after Step 5
 
 Public:
 
 - `GET /api/chords/published`
 - `GET /api/chords/:id` (published records only)
 
-Hidden unless the server binding explicitly enables local mutations:
+Authenticated administrator reads (write flag not required):
 
+- `GET /api/admin/session`
 - `GET /api/admin/chords/pre-reviewed`
+- `GET /api/admin/audit`
+- `GET /api/admin/backups`
+- `GET /api/admin/quarantine`
+
+Authenticated administrator mutations (also require `ALLOW_ADMIN_MUTATIONS=true`):
+
 - `POST /api/admin/chords/import`
 - `POST /api/admin/chords/:id/pre-review`
 - `POST /api/admin/chords/:id/publish`
 - `POST /api/admin/chords/:id/reject`
 - `POST /api/admin/chords/:id/replace`
 - `POST /api/admin/chords/:id/merge`
-- `GET /api/admin/audit`
-- `GET /api/admin/backups`
-- `GET /api/admin/quarantine`
+- `POST /api/admin/chords/:id/edit`
 
-This restriction is deliberately server-side. A hidden page, client flag, or `noindex` is not treated as security.
+`GET /api/admin/logout` redirects to Cloudflare Access logout and exposes no private data.
+
+These restrictions are deliberately server-side. A hidden page, client flag, Access header without signature verification, or `noindex` is not treated as security.

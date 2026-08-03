@@ -2,6 +2,14 @@
 
 Audit date: 2026-08-03
 
+## Administrator authentication boundary (Step 5)
+
+Cloudflare Access is the administrator identity and session provider. Access performs the hosted login flow and issues its secure application session cookie. The Worker does not trust the presence of that cookie or a client-side role flag: `worker/auth.ts` validates the Access JWT signature against the team's rotating public keys, then verifies issuer, application audience, expiry, not-before time, subject, email, and the server-only administrator email allowlist.
+
+`worker/index.ts` applies that check to `/review`, `/review/`, `/review.html`, and every `/api/admin/*` request. Public published-chord reads remain anonymous. Private responses are non-cacheable and carry defensive response headers. State-changing administrator routes also require the existing `ALLOW_ADMIN_MUTATIONS=true` binding, so authentication and the operational write switch are separate controls. Verified email addresses are attached to D1 audit entries by `worker/d1-repository.ts`.
+
+Cloudflare Access owns session duration, expiry, revocation, and logout. The review page's logout link uses the application-domain Access logout endpoint. Access dashboard policy should allow only the same specific administrator emails as the Worker's `ADMIN_EMAILS` allowlist; the Worker allowlist is the final authorization boundary.
+
 ## Persisted chord contract (schema version 1)
 
 `src/chords/persisted.ts` is the authoritative boundary for chord records saved by the application or accepted from imports. A saved record contains only stable source and editorial facts: its schema version, identity, root, registered recipe, full tuning, six fret positions, optional finger positions, optional display-name override, description, difficulty (1–5), tags, workflow status, catalog metadata, and provenance.

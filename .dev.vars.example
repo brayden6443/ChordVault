@@ -1,2 +1,5 @@
 # Copy to .dev.vars for isolated local development only.
 ALLOW_ADMIN_MUTATIONS=true
+ACCESS_TEAM_DOMAIN=https://your-team.cloudflareaccess.com
+ACCESS_AUD=replace-with-application-audience-tag
+ADMIN_EMAILS=admin@example.com

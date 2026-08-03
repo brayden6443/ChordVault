@@ -70,7 +70,7 @@ const recipeSelect = byId<HTMLSelectElement>("recipeSelect");
 const retainInput = byId<HTMLInputElement>("retainInput");
 const reviewCard = byId<HTMLElement>("reviewCard");
 const batchStatus = byId<HTMLElement>("batchStatus");
-if (!repositoryCapabilities.mutations) batchStatus.textContent = "Hosted publishing is disabled until administrator authentication is installed. Local review data remains available, but production changes cannot be published.";
+if (!repositoryCapabilities.mutations) batchStatus.textContent = "This browser workspace remains read-only for hosted records. Authorized hosted changes use the protected administrator API.";
 
 candidates = initialWorkspace.candidates;
 
