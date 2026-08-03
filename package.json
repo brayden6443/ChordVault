@@ -15,7 +15,9 @@
     "db:status:local": "wrangler d1 migrations list chord-vault --local",
     "db:migrate:production": "wrangler d1 migrations apply chord-vault --remote",
     "worker:check": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
-    "verify": "npm run lint && npm run typecheck && npm run test && npm run build && npm run smoke:build"
+    "hosted:import": "node scripts/import-hosted.ts",
+    "bundle:secrets": "node scripts/check-client-bundle.mjs",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build && npm run smoke:build && npm run worker:check && npm run bundle:secrets"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",

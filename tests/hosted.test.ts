@@ -81,10 +81,14 @@ test("API maps invalid payloads without leaking internals", async () => {
 });
 
 test("adapter selection is centralized and hosted records are runtime validated", async () => {
-  assert.equal(repositoryConfiguration({}).mode, "local"); assert.equal(repositoryConfiguration({ VITE_CHORD_REPOSITORY: "hosted" }).mode, "hosted");
+  assert.equal(repositoryConfiguration({}).mode, "local"); assert.equal(repositoryConfiguration({ PROD: true }).mode, "hosted"); assert.equal(repositoryConfiguration({ PROD: true, VITE_CHORD_REPOSITORY: "local" }).mode, "local");
   const local = new MemoryStorage(); const selection = await createChordRepository({ localStorage: local, sessionStorage: local, env: { VITE_CHORD_REPOSITORY: "hosted" }, fetcher: async () => Response.json({ records: [cRecord] }) });
   assert.equal(selection.capabilities.backend, "hosted"); assert.deepEqual(selection.repository.listPublishedVoicings().map((item) => item.id), [cRecord.id]); assert.throws(() => selection.repository.publishVoicing(cMajor));
   assert.ok(selection.repository instanceof HostedReadChordRepository); assert.ok(new LocalStorageChordRepository(new MemoryStorage()));
+});
+
+test("hosted quarantine reporting returns isolated invalid-import diagnostics", async () => {
+  const { mf, db, store } = await database(); await db.prepare("INSERT INTO quarantined_records (source,raw_json,issues_json) VALUES (?1,?2,?3)").bind("test", "{}", "[]").run(); const records = await store.quarantine(); assert.equal(records.length, 1); assert.equal(records[0].source, "test"); await mf.dispose();
 });
 
 test("local-to-hosted preparation validates records and creates backup before upload", async () => {

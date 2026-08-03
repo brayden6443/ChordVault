@@ -28,6 +28,16 @@ For multi-key changes, the local adapter first validates the complete proposed w
 
 Favorites are routed through the repository but intentionally remain keyed by chord name. Stable favorite identity is deferred to the planned identity remediation phase so this repository step does not change current behavior.
 
+## Hosted persistence boundary
+
+Step 4 adds a Cloudflare Worker and D1 adapter behind the repository boundary. D1 stores versioned persisted records, normalized tags, workflow state, audit entries, and quarantined imports. Generated queues, review position, saved editor state, theme, and name-based favorites remain local because they are browser concerns rather than durable shared chord records.
+
+The Worker exposes published-only public reads. Admin mutation routes are operation-specific and execute validated prepared statements. D1 `batch()` is the atomic boundary for publishing, replacement, merge, rejection plus audit, and record/tag updates. Database rows are validated and deterministically hydrated before entering the domain.
+
+`src/chords/repository-composition.ts` is the only environment-selection point. Local mode preserves the Step 3 adapter. Hosted mode loads published records from `/api`, retains local favorites, and disables repository mutations in the browser until Step 5 authentication exists. Production server configuration also hides all admin endpoints unless an explicit local-development binding enables them.
+
+Schema changes live only in numbered files under `migrations/` and are applied by Wrangler, which records them in `d1_migrations`. Application startup never modifies hosted schema. Operational migration, import, backup, recovery, and local fallback commands are documented in `docs/HOSTED_PERSISTENCE.md`.
+
 ## Executive summary
 
 Chord Vault is a small, static, browser-only Vite application. Its deterministic music-theory and generation modules are the strongest part of the system: they are separated by responsibility and covered by 17 passing unit tests. The public vault and private review workflow are not yet production-safe because the browser is also the database and the `/review.html` page has no authentication or authorization.
