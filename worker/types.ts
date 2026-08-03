@@ -10,4 +10,11 @@ export interface D1Database {
   batch<T = Record<string, unknown>>(statements: D1PreparedStatement[]): Promise<Array<D1Result<T>>>;
   exec(sql: string): Promise<{ count: number; duration: number }>;
 }
-export interface WorkerEnv { DB: D1Database; ASSETS?: { fetch(request: Request): Promise<Response> }; ALLOW_ADMIN_MUTATIONS: string }
+export interface WorkerEnv {
+  DB: D1Database;
+  ASSETS?: { fetch(request: Request): Promise<Response> };
+  ALLOW_ADMIN_MUTATIONS: string;
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
+  ADMIN_EMAILS?: string;
+}
