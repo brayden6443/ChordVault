@@ -6,20 +6,20 @@ import { generateBatch, generateVoicings } from "./chords/generator.ts";
 import { bassPitch, intervalLabel, intervalsRelativeToRoot, inversionForPitches, pitchesForVoicing } from "./chords/theory.ts";
 import { fretSpanFor } from "./chords/playability.ts";
 import { exactVoicingKey } from "./chords/identity.ts";
+import { migrateChordRecords, migrationEnvelope } from "./chords/migration.ts";
+import { CHORD_SCHEMA_VERSION, hydratePersistedChord, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./chords/persisted.ts";
+import { generatorRecipes, recipeById, recipeIdFromChordName } from "./chords/recipes.ts";
 import { STANDARD_TUNING, type ApprovalStatus, type ChordVoicing } from "./chords/types.ts";
 
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const RECIPES = [
-  { id: "major", label: "Major", suffix: "", requiredTones: [0, 4, 7], optionalTones: [] },
-  { id: "minor", label: "Minor", suffix: "m", requiredTones: [0, 3, 7], optionalTones: [] },
-  { id: "sus2", label: "Suspended 2", suffix: "sus2", requiredTones: [0, 2, 7], optionalTones: [] },
-  { id: "sus4", label: "Suspended 4", suffix: "sus4", requiredTones: [0, 5, 7], optionalTones: [] },
-  { id: "maj7", label: "Major 7", suffix: "maj7", requiredTones: [0, 4, 11], optionalTones: [7] },
-  { id: "dom7", label: "Dominant 7", suffix: "7", requiredTones: [0, 4, 10], optionalTones: [7] },
-  { id: "min7", label: "Minor 7", suffix: "m7", requiredTones: [0, 3, 10], optionalTones: [7] },
-  { id: "maj9", label: "Major 9", suffix: "maj9", requiredTones: [0, 4, 11], optionalTones: [2, 7] },
-  { id: "min11", label: "Minor 11", suffix: "m11", requiredTones: [0, 3, 10], optionalTones: [2, 5, 7] },
-];
+const RECIPES = generatorRecipes();
+
+function storedJson<T>(storage: Storage, key: string, fallback: T): T {
+  const raw = storage.getItem(key);
+  if (raw === null) return fallback;
+  const parsed = safeParseJson(raw);
+  return parsed.ok ? parsed.value as T : fallback;
+}
 
 const REVIEW_TAGS = ["Blues", "Math rock", "Ambient", "Warm", "Bright", "Dark", "Melancholic", "Tense", "Aggressive", "Jazz", "Ethereal"];
 const STRUCTURAL_TAGS = ["Essential", "Open", "Barre", "Movable"];
@@ -30,19 +30,46 @@ function normalizedDescriptorTags(tags: string[]): string[] {
 }
 
 type SavedReview = Pick<ChordVoicing, "approvalStatus" | "chordName" | "moodTags" | "genreTags" | "description" | "difficulty" | "descriptorTags">;
-const savedReviews: Record<string, SavedReview> = JSON.parse(localStorage.getItem("chord-vault-reviews") ?? "{}");
-let approvedVault: ChordVoicing[] = JSON.parse(localStorage.getItem("chord-vault-approved-voicings") ?? "[]");
-let publishedVault: ChordVoicing[] = JSON.parse(localStorage.getItem("chord-vault-published-voicings") ?? "[]");
+const savedReviews = storedJson<Record<string, SavedReview>>(localStorage, "chord-vault-reviews", {});
+let approvedVault = storedJson<ChordVoicing[]>(localStorage, "chord-vault-approved-voicings", []);
+let publishedVault = storedJson<ChordVoicing[]>(localStorage, "chord-vault-published-voicings", []);
 interface LibraryItem { key: string; name: string; root?: string; chordQuality?: string; difficulty: number; descriptorTags: string[]; frets?: number[]; fingers?: string[]; source: "Main Vault" | "Pre-reviewed" | "Unapproved"; }
-const finalApprovedKeys = new Set<string>(JSON.parse(localStorage.getItem("chord-vault-final-approved-keys") ?? "[]"));
+const finalApprovedKeys = new Set<string>(storedJson<string[]>(localStorage, "chord-vault-final-approved-keys", []));
 const fallbackPublicLibrary: LibraryItem[] = CANONICAL_VOICINGS.map((voicing) => ({
   key: voicing.id, name: voicing.chordName, root: voicing.root, chordQuality: voicing.chordQuality, difficulty: voicing.difficulty, source: "Main Vault",
   frets: voicing.fretPositions.map((fret) => fret ?? -1), fingers: (voicing.fingerPositions ?? []).map((finger) => finger ? String(finger) : ""),
   descriptorTags: [voicing.displayPriority === 1 ? "Essential" : "", voicing.category === "Essential Open" ? "Open" : "Barre", voicing.movable ? "Movable" : ""].filter(Boolean),
 }));
-const publicLibrary: LibraryItem[] = (JSON.parse(localStorage.getItem("chord-vault-public-library") ?? "null") ?? fallbackPublicLibrary)
+const publicLibrary: LibraryItem[] = (storedJson<LibraryItem[] | null>(localStorage, "chord-vault-public-library", null) ?? fallbackPublicLibrary)
   .map((item: LibraryItem) => ({ ...item, source: finalApprovedKeys.has(item.key) ? "Main Vault" : "Unapproved" }));
-const libraryEdits: Record<string, { difficulty?: number; descriptorTags?: string[] }> = JSON.parse(localStorage.getItem("chord-vault-library-edits") ?? "{}");
+const libraryEdits = storedJson<Record<string, { difficulty?: number; descriptorTags?: string[] }>>(localStorage, "chord-vault-library-edits", {});
+
+function migrateBrowserChordData(): void {
+  const persistedKey = `chord-vault-persisted-v${CHORD_SCHEMA_VERSION}`;
+  const existing = localStorage.getItem(persistedKey);
+  if (existing !== null) {
+    const parsed = safeParseJson(existing);
+    if (parsed.ok && typeof parsed.value === "object" && parsed.value !== null && "schemaVersion" in parsed.value && parsed.value.schemaVersion === CHORD_SCHEMA_VERSION) return;
+    localStorage.setItem(`chord-vault-quarantine-v${CHORD_SCHEMA_VERSION}`, JSON.stringify([{ source: persistedKey, raw: existing, issues: parsed.ok ? [{ path: "schemaVersion", message: "unsupported or missing envelope schema version" }] : parsed.issues }]));
+    return;
+  }
+  const backupKey = `chord-vault-migration-backup-v${CHORD_SCHEMA_VERSION}`;
+  if (localStorage.getItem(backupKey) === null) {
+    localStorage.setItem(backupKey, JSON.stringify({
+      approved: localStorage.getItem("chord-vault-approved-voicings"),
+      published: localStorage.getItem("chord-vault-published-voicings"),
+    }));
+  }
+  const inputs = [
+    ...approvedVault.map((value) => ({ source: "approved browser data", workflowStatus: "pre-reviewed" as const, value })),
+    ...publishedVault.map((value) => ({ source: "published browser data", workflowStatus: "published" as const, value })),
+  ];
+  const result = migrateChordRecords(inputs);
+  localStorage.setItem(persistedKey, migrationEnvelope(result));
+  localStorage.setItem(`chord-vault-migration-report-v${CHORD_SCHEMA_VERSION}`, JSON.stringify(result.report));
+  localStorage.setItem(`chord-vault-quarantine-v${CHORD_SCHEMA_VERSION}`, JSON.stringify(result.quarantine));
+}
+migrateBrowserChordData();
 function migrateLegacyTags(): void {
   const migrateVoicing = (voicing: ChordVoicing) => {
     const descriptive = normalizedDescriptorTags([...(voicing.descriptorTags ?? []), ...voicing.moodTags, ...voicing.genreTags]);
@@ -66,9 +93,9 @@ let activeLibrarySource = "All";
 let libraryPage = 0;
 let candidates: ChordVoicing[] = [];
 let currentIndex = Number(localStorage.getItem("chord-vault-review-index") ?? 0);
-const rejectedShapes = new Set<string>(JSON.parse(localStorage.getItem("chord-vault-rejected-shapes") ?? "[]"));
-const reviewLater = new Set<string>(JSON.parse(localStorage.getItem("chord-vault-review-later") ?? "[]"));
-const auditLog: Array<{ at: string; action: string; chord: string }> = JSON.parse(localStorage.getItem("chord-vault-audit-log") ?? "[]");
+const rejectedShapes = new Set<string>(storedJson<string[]>(localStorage, "chord-vault-rejected-shapes", []));
+const reviewLater = new Set<string>(storedJson<string[]>(localStorage, "chord-vault-review-later", []));
+const auditLog = storedJson<Array<{ at: string; action: string; chord: string }>>(localStorage, "chord-vault-audit-log", []);
 const selectedLibraryKeys = new Set<string>();
 let undoAction: (() => void) | null = null;
 let audioContext: AudioContext | null = null;
@@ -81,7 +108,7 @@ const retainInput = byId<HTMLInputElement>("retainInput");
 const reviewCard = byId<HTMLElement>("reviewCard");
 const batchStatus = byId<HTMLElement>("batchStatus");
 
-try { candidates = JSON.parse(sessionStorage.getItem("chord-vault-active-queue") ?? "[]"); } catch { candidates = []; }
+candidates = storedJson<ChordVoicing[]>(sessionStorage, "chord-vault-active-queue", []);
 
 function persistQueue(): void {
   sessionStorage.setItem("chord-vault-active-queue", JSON.stringify(candidates));
@@ -268,13 +295,8 @@ function parseCsvObjects(text: string): Record<string, unknown>[] {
 }
 
 function importedQuality(name: string, supplied?: unknown): string {
-  if (typeof supplied === "string" && supplied) return supplied;
-  const lower = name.toLowerCase();
-  if (lower.includes("maj9")) return "maj9"; if (lower.includes("m11")) return "min11";
-  if (lower.includes("m9")) return "min9"; if (lower.includes("maj7")) return "maj7";
-  if (lower.includes("m7")) return "min7"; if (lower.includes("sus2")) return "sus2";
-  if (lower.includes("sus4")) return "sus4"; if (lower.includes("7")) return "dom7";
-  return /^[A-G](?:#|b)?m(?!aj)/.test(name) ? "minor" : "major";
+  if (typeof supplied === "string" && recipeById(supplied)) return recipeById(supplied)!.id;
+  return recipeIdFromChordName(name);
 }
 
 function importedArray(value: unknown): string[] {
@@ -289,6 +311,11 @@ function importHash(value: string): string {
 }
 
 function normalizeImportedVoicing(raw: Record<string, unknown>, index: number): ChordVoicing {
+  if ("schemaVersion" in raw) {
+    const validated = validatePersistedChord(raw);
+    if (!validated.ok) throw new Error(`Row ${index + 1}: ${validated.issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
+    return hydratePersistedChord({ ...validated.value, workflowStatus: "pre-reviewed" });
+  }
   const chordName = String(raw.chordName ?? raw.name ?? "").trim();
   const root = String(raw.root ?? chordName.match(/^[A-G](?:#|b)?/)?.[0] ?? "").trim();
   if (!chordName || !root) throw new Error(`Row ${index + 1}: chord name or root is missing`);
@@ -298,34 +325,33 @@ function normalizeImportedVoicing(raw: Record<string, unknown>, index: number): 
   const fretPositions = rawFrets.map((value) => String(value).toLowerCase() === "x" || value === null || Number(value) < 0 ? null : Number(value));
   if (fretPositions.length !== 6 || fretPositions.some((fret) => fret !== null && (!Number.isInteger(fret) || fret < 0))) throw new Error(`Row ${index + 1}: invalid six-string fret pattern`);
   const chordQuality = importedQuality(chordName, raw.chordQuality);
-  const pitches = pitchesForVoicing(STANDARD_TUNING, fretPositions);
-  const intervals = intervalsRelativeToRoot(pitches, root);
-  const recipe = RECIPES.find((item) => item.id === chordQuality);
-  if (recipe && recipe.requiredTones.filter((tone) => tone !== 7).some((tone) => !intervals.includes(tone))) throw new Error(`Row ${index + 1}: fingering does not produce ${chordName}`);
-  const bass = bassPitch(pitches);
+  const recipe = recipeById(chordQuality);
+  if (!recipe) throw new Error(`Row ${index + 1}: unknown chord recipe`);
   const fingers = Array.isArray(raw.fingerPositions) ? raw.fingerPositions : String(raw.fingerPositions ?? "").split(" ");
   const fingerPositions = fretPositions.map((fret, stringIndex) => fret && Number(fingers[stringIndex]) ? Number(fingers[stringIndex]) : null);
   const shapeKey = `${STANDARD_TUNING.id}|${root}|${chordQuality}|${fretPositions.map((fret) => fret ?? "x").join("-")}`;
   const descriptorTags = normalizedDescriptorTags([...importedArray(raw.descriptorTags), ...importedArray(raw.moodTags), ...importedArray(raw.genreTags)]);
-  const zeroBreakdown = { harmonicCompleteness: 0, playability: 0, usefulBass: 0, openStrings: 0, extensions: 0, uniqueness: 0, fretSpanPenalty: 0, muddyIntervalPenalty: 0, duplicateNotePenalty: 0 };
-  return {
-    id: String(raw.id || `imported_${importHash(shapeKey)}`), slug: String(raw.slug || `${chordName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${importHash(shapeKey)}`),
-    chordName, chordQuality, root, tuning: STANDARD_TUNING, fretPositions, fingerPositions,
-    notes: pitches.map((pitch) => pitch.note), intervals, bassNote: bass?.note ?? "", inversion: inversionForPitches(pitches, root), alternateNames: [],
-    fretSpan: fretSpanFor(fretPositions), openStringCount: fretPositions.filter((fret) => fret === 0).length,
-    difficulty: Math.max(1, Math.min(5, Number(raw.difficulty) || 3)) as 1 | 2 | 3 | 4 | 5,
-    moodTags: descriptorTags.filter((tag) => REVIEW_TAGS.includes(tag)), genreTags: [], descriptorTags,
-    description: String(raw.description ?? ""), qualityScore: Number(raw.qualityScore) || 0,
-    scoreBreakdown: typeof raw.scoreBreakdown === "object" && raw.scoreBreakdown ? raw.scoreBreakdown as ChordVoicing["scoreBreakdown"] : zeroBreakdown,
-    approvalStatus: "approved", possibleBarres: [],
+  const persisted: PersistedChordRecordV1 = {
+    schemaVersion: CHORD_SCHEMA_VERSION, id: String(raw.id || `imported_${importHash(shapeKey)}`), root,
+    recipeId: recipe.id as PersistedChordRecordV1["recipeId"], tuning: STANDARD_TUNING, fretPositions, fingerPositions,
+    displayNameOverride: chordName === `${root}${recipe.suffix}` ? undefined : chordName,
+    description: String(raw.description ?? ""), difficulty: Math.max(1, Math.min(5, Number(raw.difficulty) || 3)) as 1 | 2 | 3 | 4 | 5,
+    tags: descriptorTags, workflowStatus: "pre-reviewed", provenance: { source: "Imported file" },
   };
+  const validated = validatePersistedChord(persisted);
+  if (!validated.ok) throw new Error(`Row ${index + 1}: ${validated.issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
+  const hydrated = hydratePersistedChord(validated.value);
+  if (recipe.requiredIntervals.filter((tone) => !recipe.permittedOmissions.includes(tone)).some((tone) => !hydrated.intervals.includes(tone))) throw new Error(`Row ${index + 1}: fingering does not produce ${chordName}`);
+  return hydrated;
 }
 
 async function importApprovedFile(file: File): Promise<void> {
   const importStatus = byId("importStatus");
   try {
     const text = await file.text();
-    const parsed = file.name.toLowerCase().endsWith(".csv") ? parseCsvObjects(text) : JSON.parse(text);
+    const json = file.name.toLowerCase().endsWith(".csv") ? null : safeParseJson(text);
+    if (json && !json.ok) throw new Error(json.issues[0].message);
+    const parsed = file.name.toLowerCase().endsWith(".csv") ? parseCsvObjects(text) : json!.value as Record<string, unknown> | Record<string, unknown>[];
     const records = Array.isArray(parsed) ? parsed : Array.isArray(parsed.voicings) ? parsed.voicings : [parsed];
     const existingKeys = new Set(approvedVault.map(exactVoicingKey));
     let imported = 0; let duplicates = 0; let invalid = 0;
@@ -407,7 +433,7 @@ byId("generateOne").addEventListener("click", () => {
   batchStatus.textContent = "Generating candidates…";
   const generated = rankWithDecisions(rankWithCurationProfile(generateVoicings({
     tuning: STANDARD_TUNING, chordName: `${rootSelect.value}${selected.suffix}`, chordQuality: selected.id, root: rootSelect.value,
-    requiredTones: selected.requiredTones, optionalTones: selected.optionalTones,
+    requiredTones: [...selected.requiredIntervals], optionalTones: [...selected.optionalIntervals],
     ...preset,
     maxRawCandidates: 50_000, maxResults: resultLimit(), allowOmitFifth: true,
   }), APPROVED_C_PROFILE)).map(applySaved);
@@ -425,7 +451,7 @@ byId("generateBatch").addEventListener("click", async () => {
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   const batch = generateBatch(ROOTS.map((root) => ({
     chordName: `${root}${selected.suffix}`, chordQuality: selected.id, root,
-    requiredTones: selected.requiredTones, optionalTones: selected.optionalTones,
+    requiredTones: [...selected.requiredIntervals], optionalTones: [...selected.optionalIntervals],
   })), {
     tuning: STANDARD_TUNING, ...preset,
     maxRawCandidates: 50_000, maxResults: resultLimit(), allowOmitFifth: true,

@@ -1,4 +1,13 @@
 import { CANONICAL_VOICINGS } from './src/chords/canonical.ts';
+import { safeParseJson } from './src/chords/persisted.ts';
+import { recipeById, recipeIdFromChordName } from './src/chords/recipes.ts';
+
+function storedJson(key,fallback){
+  const raw=localStorage.getItem(key);
+  if(raw===null)return fallback;
+  const parsed=safeParseJson(raw);
+  return parsed.ok?parsed.value:fallback;
+}
 
 function displayBarre(frets){
   const fretted=frets.filter(fret=>fret>0);
@@ -121,7 +130,7 @@ const MOOD_TAGS=new Set(['Blues','Math rock','Ambient','Warm','Bright','Dark','M
 const TAG_REPLACEMENTS={Dreamy:'Ethereal',Progressive:'Math rock','Neo soul':'Jazz',Funk:'Blues'};
 function normalizedMoodTags(tags=[]){return [...new Set(tags.map(tag=>TAG_REPLACEMENTS[tag]??tag).filter(tag=>MOOD_TAGS.has(tag)))]}
 function normalizedDisplayTags(tags=[]){return [...new Set(tags.map(tag=>TAG_REPLACEMENTS[tag]??tag).map(tag=>tag==='A-shape barre'||tag==='E-shape barre'?'Barre':tag).filter(tag=>MOOD_TAGS.has(tag)||['Essential','Open','Barre','Movable'].includes(tag)))]}
-const publishedVoicings=JSON.parse(localStorage.getItem('chord-vault-published-voicings')||'[]').map(voicing=>{
+const publishedVoicings=storedJson('chord-vault-published-voicings',[]).map(voicing=>{
   const descriptorTags=normalizedDisplayTags([...(voicing.descriptorTags??[]),...(voicing.moodTags??[]),...(voicing.genreTags??[])]);
   return {...voicing,moodTags:descriptorTags.filter(tag=>MOOD_TAGS.has(tag)),genreTags:[],descriptorTags};
 });
@@ -138,7 +147,7 @@ const publishedKeys=new Set(publishedChords.map(chord=>`${chord.name}|${chord.fr
 const chordRecords=[...canonicalChords,...publishedChords.filter(chord=>!canonicalKeys.has(`${chord.name}|${chord.frets.join('-')}`)),...curatedChords.filter(chord=>!canonicalKeys.has(`${chord.name}|${chord.frets.join('-')}`)&&!publishedKeys.has(`${chord.name}|${chord.frets.join('-')}`)).map(chord=>({...chord,category:'Other Approved',displayPriority:100}))]
   .sort((left,right)=>(left.category==='Essential Open'?10:left.category==='Essential Barre'?20:100)-(right.category==='Essential Open'?10:right.category==='Essential Barre'?20:100)
     ||(left.displayPriority??999)-(right.displayPriority??999)||left.difficulty-right.difficulty||left.name.localeCompare(right.name));
-const libraryEdits=JSON.parse(localStorage.getItem('chord-vault-library-edits')||'{}');
+const libraryEdits=storedJson('chord-vault-library-edits',{});
 const allChords=chordRecords.map((chord,index)=>{
   const libraryKey=chord.id??`curated:${chord.name}:${chord.frets.join('-')}`;
   const edit=libraryEdits[libraryKey];
@@ -146,7 +155,7 @@ const allChords=chordRecords.map((chord,index)=>{
 });
 localStorage.setItem('chord-vault-public-library',JSON.stringify(allChords.map(chord=>({key:chord.id,name:chord.name,root:chord.rootKey,chordQuality:chord.chordQuality,difficulty:chord.difficulty,descriptorTags:chord.descriptorTags,frets:chord.frets,fingers:chord.fingers,source:'Main Vault'}))));
 if(localStorage.getItem('chord-vault-final-approved-keys')===null)localStorage.setItem('chord-vault-final-approved-keys','[]');
-const finalApprovedKeys=new Set(JSON.parse(localStorage.getItem('chord-vault-final-approved-keys')||'[]'));
+const finalApprovedKeys=new Set(storedJson('chord-vault-final-approved-keys',[]));
 const chords=allChords.filter(chord=>finalApprovedKeys.has(chord.id));
 
 let activeMood = 'All';
@@ -155,7 +164,7 @@ let activeQuality = 'All';
 let activeRecipe = 'All';
 let activeDifficulty = 'All';
 let activeType = 'All';
-let saved = new Set(JSON.parse(localStorage.getItem('chord-vault-saved') || '[]'));
+let saved = new Set(storedJson('chord-vault-saved',[]));
 let savedOnly = false;
 let pageStart = 0;
 const grid = document.querySelector('#chordGrid');
@@ -211,35 +220,15 @@ function chordRoot(chord){
 }
 
 function chordQuality(chord){
-  if(chord.chordQuality)return chord.chordQuality;
-  const name=chord.name.toLowerCase();
-  if(name.includes('m11'))return 'min11';
-  if(name.includes('maj9'))return 'maj9';
-  if(name.includes('m9'))return 'min9';
-  if(name.includes('maj7'))return 'maj7';
-  if(name.includes('m7'))return 'min7';
-  if(name.includes('sus2'))return 'sus2';
-  if(name.includes('sus4')||name.includes('sus'))return 'sus4';
-  if(name.includes('7'))return 'dom7';
-  if(/^([a-g](?:#|b)?m)(?!aj)/i.test(name))return 'minor';
-  return 'major';
+  return recipeById(chord.chordQuality??'')?.id??recipeIdFromChordName(chord.name);
 }
 
 function qualityFamily(chord){
-  const quality=chordQuality(chord);
-  if(['minor','min7','min9','min11'].includes(quality))return 'Minor';
-  if(['major','dom7','maj7','maj9'].includes(quality))return 'Major';
-  return 'Neither';
+  return recipeById(chordQuality(chord))?.publicQualityFamily??'Neither';
 }
 
 function recipeFamily(chord){
-  const quality=chordQuality(chord);
-  if(['major','minor'].includes(quality))return 'Triad';
-  if(['dom7','maj7','min7'].includes(quality))return '7th';
-  if(['sus2','sus4'].includes(quality))return 'Sus';
-  if(['maj9','min9'].includes(quality))return '9th';
-  if(quality==='min11')return '11th';
-  return 'Other';
+  return recipeById(chordQuality(chord))?.family??'Other';
 }
 
 function defaultDescriptorTags(chord){

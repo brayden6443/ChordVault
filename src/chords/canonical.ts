@@ -1,5 +1,6 @@
 import { exactVoicingKey } from "./identity.ts";
 import { analyzePlayability } from "./playability.ts";
+import { requireRecipe } from "./recipes.ts";
 import { scoreVoicing } from "./scoring.ts";
 import { bassPitch, intervalsRelativeToRoot, inversionForPitches, pitchClassFromName, pitchClassName, pitchesForVoicing } from "./theory.ts";
 import { STANDARD_TUNING, type CanonicalVoicing, type GenerationConfig, type ShapeFamily } from "./types.ts";
@@ -19,13 +20,6 @@ interface CanonicalShapeSpec {
   applicableRoots: string[];
 }
 
-const SUFFIX: Record<string, string> = { major: "", minor: "m", sus2: "sus2", sus4: "sus4", dom7: "7", maj7: "maj7", min7: "m7", min9: "m9", min11: "m11" };
-const TONES: Record<string, number[]> = {
-  major: [0, 4, 7], minor: [0, 3, 7], sus2: [0, 2, 7], sus4: [0, 5, 7],
-  dom7: [0, 4, 7, 10], maj7: [0, 4, 7, 11], min7: [0, 3, 7, 10],
-  min9: [0, 2, 3, 7, 10], min11: [0, 3, 5, 7, 10],
-};
-
 const OPEN_SPECS: CanonicalShapeSpec[] = [
   ["C","major",[null,3,2,0,1,0],"Open C shape",1], ["A","major",[null,0,2,2,2,0],"Open A shape",1],
   ["G","major",[3,2,0,0,0,3],"Open G shape",1], ["E","major",[0,2,2,1,0,0],"Open E shape",1], ["D","major",[null,null,0,2,3,2],"Open D shape",1],
@@ -40,8 +34,8 @@ const OPEN_SPECS: CanonicalShapeSpec[] = [
   ["A","min7",[null,0,2,0,1,0],"Open A shape",1], ["D","min7",[null,null,0,2,1,1],"Open D shape",1], ["E","min7",[0,2,0,0,0,0],"Open E shape",1],
   ["E","min9",[0,2,0,0,0,2],"Open E shape",1], ["B","min11",[null,2,0,2,0,0],"Open A shape",1],
 ].map(([root, quality, frets, family, priority]) => ({
-  root: root as string, quality: quality as string, chordName: `${root}${SUFFIX[quality as string]}`,
-  frets: frets as Array<number | null>, intervals: TONES[quality as string], family: family as ShapeFamily,
+  root: root as string, quality: quality as string, chordName: `${root}${requireRecipe(quality as string).suffix}`,
+  frets: frets as Array<number | null>, intervals: [...requireRecipe(quality as string).requiredIntervals, ...requireRecipe(quality as string).optionalIntervals], family: family as ShapeFamily,
   category: "Essential Open", priority: priority as number, movable: false, baseRoot: root as string, applicableRoots: [root as string],
 }));
 
@@ -65,8 +59,8 @@ function barreSpecs(): CanonicalShapeSpec[] {
     const delta = (pitchClassFromName(root) - basePitchClass + 12) % 12 || 12;
     const frets = template.offsets.map((offset, index) => template.mute.includes(index as never) ? null : delta + offset);
     return {
-      root, quality: template.quality, chordName: `${root}${SUFFIX[template.quality]}`, frets,
-      intervals: TONES[template.quality], family: template.family, category: "Essential Barre" as const,
+      root, quality: template.quality, chordName: `${root}${requireRecipe(template.quality).suffix}`, frets,
+      intervals: [...requireRecipe(template.quality).requiredIntervals, ...requireRecipe(template.quality).optionalIntervals], family: template.family, category: "Essential Barre" as const,
       priority: template.family === "E-shape barre" ? 1 : 2, movable: true,
       baseRoot: template.family === "E-shape barre" ? "E" : "A", applicableRoots: roots,
     };
@@ -80,9 +74,10 @@ function stableHash(value: string): string {
 }
 
 export function createCanonicalVoicing(spec: CanonicalShapeSpec, validate = true): CanonicalVoicing {
+  const recipe = requireRecipe(spec.quality);
   const config: GenerationConfig = {
     tuning: STANDARD_TUNING, chordName: spec.chordName, chordQuality: spec.quality, root: spec.root,
-    requiredTones: spec.intervals, fretMin: 0, fretMax: 14, maxFretSpan: 4, maxFrettedNotes: 6,
+    requiredTones: [...recipe.requiredIntervals], optionalTones: [...recipe.optionalIntervals], fretMin: 0, fretMax: 14, maxFretSpan: 4, maxFrettedNotes: 6,
     maxInternalMutedStrings: 1, maxAdjacentStretch: 4, minPlayedStrings: 3, allowOmitFifth: true,
   };
   const fretted = spec.frets.filter((fret): fret is number => fret !== null && fret > 0);
@@ -96,7 +91,7 @@ export function createCanonicalVoicing(spec: CanonicalShapeSpec, validate = true
   if (!analysis.valid) throw new Error(`${spec.chordName} ${spec.family} failed validation: ${analysis.reasons.join("; ")}`);
   const pitches = pitchesForVoicing(STANDARD_TUNING, spec.frets);
   const intervals = intervalsRelativeToRoot(pitches, spec.root);
-  const required = new Set(spec.intervals.filter((interval) => interval !== 7));
+  const required = new Set(recipe.requiredIntervals.filter((interval) => !recipe.permittedOmissions.includes(interval)));
   if ([...required].some((interval) => !intervals.includes(interval))) throw new Error(`${spec.chordName} ${spec.family} produces incorrect intervals`);
   const scored = validate ? scoreVoicing(pitches, intervals, analysis, config) : {
     score: 80,

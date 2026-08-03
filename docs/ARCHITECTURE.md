@@ -2,6 +2,20 @@
 
 Audit date: 2026-08-03
 
+## Persisted chord contract (schema version 1)
+
+`src/chords/persisted.ts` is the authoritative boundary for chord records saved by the application or accepted from imports. A saved record contains only stable source and editorial facts: its schema version, identity, root, registered recipe, full tuning, six fret positions, optional finger positions, optional display-name override, description, difficulty (1–5), tags, workflow status, catalog metadata, and provenance.
+
+Notes, intervals, bass note, inversion, alternate names, fret span, open-string count, possible barres, playback frequencies, and quality scores are calculated when a record is hydrated. They are deliberately not authoritative persisted fields because they can be reproduced from tuning, frets, root, and recipe. This prevents stale or imported calculations from overriding deterministic music theory.
+
+Runtime validation rejects malformed tunings and positions, unknown recipes, invalid difficulty/status values, inconsistent canonical metadata, and unknown schema versions. Invalid records are quarantined with field-level diagnostics instead of crashing a page or entering the usable collection.
+
+`src/chords/recipes.ts` is the single recipe registry. It contains only recipes already supported by Chord Vault: major, minor, sus2, sus4, dominant 7, major 7, minor 7, major 9, minor 9, and minor 11. Generator availability and canonical open/barre coverage are explicit metadata, so a planned recipe can be added in one place and tested.
+
+The review page performs an additive, one-time migration to `chord-vault-persisted-v1`. Before writing, it stores the untouched legacy JSON strings in `chord-vault-migration-backup-v1`. It never deletes or rewrites the old approved or published keys. Separate records retain the migration report and quarantined data. Re-running is idempotent because an existing versioned envelope is not overwritten. The pure migration functions also support dry-run reporting.
+
+This phase does not make the new envelope the live repository and does not introduce a backend. Authentication, a hosted repository, favorites, collections, exports, and additional recipes remain later planned phases. That boundary keeps this schema work reversible and avoids abstractions those features do not yet require.
+
 ## Executive summary
 
 Chord Vault is a small, static, browser-only Vite application. Its deterministic music-theory and generation modules are the strongest part of the system: they are separated by responsibility and covered by 17 passing unit tests. The public vault and private review workflow are not yet production-safe because the browser is also the database and the `/review.html` page has no authentication or authorization.
