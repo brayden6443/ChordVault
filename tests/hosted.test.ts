@@ -9,7 +9,7 @@ import { backupThenUpload, prepareHostedImport } from "../src/chords/hosted-impo
 import { persistChordVoicing } from "../src/chords/persisted.ts";
 import { createChordRepository, repositoryConfiguration } from "../src/chords/repository-composition.ts";
 import { D1ChordStore, HostedDataError } from "../worker/d1-repository.ts";
-import { handleApi, handleRequest } from "../worker/index.ts";
+import worker, { handleApi, handleRequest } from "../worker/index.ts";
 import type { D1Database, WorkerEnv } from "../worker/types.ts";
 
 class MemoryStorage implements StoragePort { values = new Map<string, string>(); getItem(key: string): string | null { return this.values.get(key) ?? null; } setItem(key: string, value: string): void { this.values.set(key, value); } removeItem(key: string): void { this.values.delete(key); } }
@@ -87,6 +87,16 @@ test("review route and every admin endpoint reject unauthenticated requests", as
   assert.equal((await handleRequest(new Request("https://example.test/review.html"), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/audit"), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/x/reject", { method: "POST" }), env, unauthenticated)).status, 401);
+  await mf.dispose();
+});
+
+test("exported fetch does not pass Cloudflare ExecutionContext into dependency injection", async () => {
+  const { mf, db } = await database();
+  const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
+  const response = await Reflect.apply(worker.fetch, worker, [new Request("https://example.test/api/admin/session"), env, { waitUntil() {}, passThroughOnException() {} }]);
+  const payload = await response.json() as { error: { code: string } };
+  assert.equal(response.status, 503);
+  assert.equal(payload.error.code, "AUTH_NOT_CONFIGURED");
   await mf.dispose();
 });
 

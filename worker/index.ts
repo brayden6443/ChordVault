@@ -30,9 +30,6 @@ function authFailure(result: Exclude<AuthenticationResult, { ok: true }>): Respo
 
 async function requireAdmin(request: Request, env: WorkerEnv, dependencies: WorkerDependencies): Promise<AdminPrincipal | Response> {
   const result = await dependencies.authenticate(request, env);
-
-  console.log("AUTH RESULT:", JSON.stringify(result));
-
   return result.ok ? result.principal : authFailure(result);
 }
 
@@ -68,8 +65,6 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     if (!path.startsWith("/api/admin/")) return json({ error: { code: "NOT_FOUND", message: "Route not found." } }, 404);
     const principal = await requireAdmin(request, env, dependencies);
     if (principal instanceof Response) return principal;
-
-    console.log("ADMIN PRINCIPAL:", JSON.stringify(principal));
     if (request.method === "GET" && path === "/api/admin/session") return json({ administrator: { email: principal.email }, expiresAt: principal.expiresAt });
     if (request.method === "GET" && path === "/api/admin/chords/pre-reviewed") return json({ records: await store.list("pre-reviewed") });
     if (request.method === "GET" && path === "/api/admin/audit") return json({ entries: await store.auditLog() });
@@ -112,4 +107,8 @@ export async function handleRequest(request: Request, env: WorkerEnv, dependenci
   return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
 }
 
-export default { fetch: handleRequest };
+export default {
+  fetch(request: Request, env: WorkerEnv): Promise<Response> {
+    return handleRequest(request, env);
+  },
+};
