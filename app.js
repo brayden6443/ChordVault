@@ -3,6 +3,7 @@ import { createChordRepository } from './src/chords/repository-composition.ts';
 import { recipeById, recipeIdFromChordName } from './src/chords/recipes.ts';
 import { displayBarre } from './src/chords/diagram.ts';
 import { legacyChordSlug } from './src/chords/slug.ts';
+import { normalizedDescriptorTags, normalizedMoodTags, REVIEW_TAGS } from './src/chords/tags.ts';
 
 const {repository:chordRepository,capabilities:repositoryCapabilities}=await createChordRepository({localStorage,sessionStorage,env:import.meta.env});
 const repositoryWorkspace=chordRepository.loadWorkspace();
@@ -107,10 +108,8 @@ const canonicalChords=canonicalBase.map(chord=>{
   return curated?{...chord,...curated,chordQuality:chord.chordQuality,root:chord.root,isEssential:true,isCanonical:true,category:chord.category,displayPriority:chord.displayPriority,movable:chord.movable,shapeFamily:chord.shapeFamily}:chord;
 });
 const canonicalKeys=new Set(canonicalChords.map(chord=>`${chord.name}|${chord.frets.join('-')}`));
-const MOOD_TAGS=new Set(['Blues','Math rock','Ambient','Warm','Bright','Dark','Melancholic','Tense','Aggressive','Jazz','Ethereal']);
-const TAG_REPLACEMENTS={Dreamy:'Ethereal',Progressive:'Math rock','Neo soul':'Jazz',Funk:'Blues'};
-function normalizedMoodTags(tags=[]){return [...new Set(tags.map(tag=>TAG_REPLACEMENTS[tag]??tag).filter(tag=>MOOD_TAGS.has(tag)))]}
-function normalizedDisplayTags(tags=[]){return [...new Set(tags.map(tag=>TAG_REPLACEMENTS[tag]??tag).map(tag=>tag==='A-shape barre'||tag==='E-shape barre'?'Barre':tag).filter(tag=>MOOD_TAGS.has(tag)||['Essential','Open','Barre','Movable'].includes(tag)))]}
+const MOOD_TAGS=new Set(REVIEW_TAGS);
+const normalizedDisplayTags=normalizedDescriptorTags;
 const publishedVoicings=repositoryWorkspace.published.map(voicing=>{
   const descriptorTags=normalizedDisplayTags([...(voicing.descriptorTags??[]),...(voicing.moodTags??[]),...(voicing.genreTags??[])]);
   return {...voicing,moodTags:descriptorTags.filter(tag=>MOOD_TAGS.has(tag)),genreTags:[],descriptorTags};

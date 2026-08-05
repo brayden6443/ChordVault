@@ -1,4 +1,5 @@
 import { hydratePersistedChord, type PersistedChordRecordV1 } from "./persisted.ts";
+import { normalizedDescriptorTags } from "./tags.ts";
 
 export interface PublicChordDetails {
   id: string;
@@ -35,7 +36,7 @@ export function toPublicChordDetails(record: PersistedChordRecordV1, publicSlug?
     bassNote: chord.bassNote,
     inversion: chord.inversion,
     difficulty: chord.difficulty,
-    tags: [...chord.descriptorTags ?? []],
+    tags: normalizedDescriptorTags(chord.descriptorTags ?? []),
     description: chord.description,
     possibleBarres: chord.possibleBarres.map((barre) => ({ ...barre })),
   };

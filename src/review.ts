@@ -10,19 +10,12 @@ import { createChordRepository } from "./chords/repository-composition.ts";
 import { CHORD_SCHEMA_VERSION, hydratePersistedChord, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./chords/persisted.ts";
 import { generatorRecipes, recipeById, recipeIdFromChordName } from "./chords/recipes.ts";
 import { STANDARD_TUNING, type ApprovalStatus, type ChordVoicing } from "./chords/types.ts";
+import { normalizedDescriptorTags, REVIEW_TAGS, STRUCTURAL_TAGS } from "./chords/tags.ts";
 
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const RECIPES = generatorRecipes();
 const { repository: chordRepository, capabilities: repositoryCapabilities } = await createChordRepository({ localStorage, sessionStorage, env: import.meta.env });
 const initialWorkspace = chordRepository.loadWorkspace();
-
-const REVIEW_TAGS = ["Blues", "Math rock", "Ambient", "Warm", "Bright", "Dark", "Melancholic", "Tense", "Aggressive", "Jazz", "Ethereal"];
-const STRUCTURAL_TAGS = ["Essential", "Open", "Barre", "Movable"];
-const TAG_REPLACEMENTS: Record<string, string> = { Dreamy: "Ethereal", Progressive: "Math rock", "Neo soul": "Jazz", Funk: "Blues", "A-shape barre": "Barre", "E-shape barre": "Barre" };
-function normalizedDescriptorTags(tags: string[]): string[] {
-  const allowed = new Set([...STRUCTURAL_TAGS, ...REVIEW_TAGS]);
-  return [...new Set(tags.map((tag) => TAG_REPLACEMENTS[tag] ?? tag).filter((tag) => allowed.has(tag)))];
-}
 
 const savedReviews = initialWorkspace.savedReviews;
 let approvedVault = initialWorkspace.preReviewed;
