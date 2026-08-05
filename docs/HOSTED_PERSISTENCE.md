@@ -39,6 +39,8 @@ Use `.dev.vars` placeholders for isolated local testing only. Without valid Acce
 
 Cloudflare Access controls session duration in its application policy. Expired, revoked, wrongly issued, wrongly signed, or non-allowlisted sessions fail closed in the Worker. The review-page logout link goes to the application-domain `/cdn-cgi/access/logout` endpoint.
 
+The Worker default export deliberately wraps `handleRequest(request, env)` instead of assigning `handleRequest` directly as the runtime handler. Cloudflare's third `ExecutionContext` argument is therefore never forwarded into the application dependency-injection parameter. Keep the runtime-signature regression test whenever this entry point changes.
+
 ## Production database and migrations
 
 Create the database once:

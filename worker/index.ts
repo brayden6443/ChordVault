@@ -85,10 +85,7 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     if (action === "replace") return json({ record: await store.replace(id, value, principal.email) });
     if (action === "edit") return json({ record: await store.edit(id, value, principal.email) });
     return json({ record: await store.merge(id, value, principal.email) });
-    } catch (error) {
-    console.log("ERROR:", error instanceof Error ? error.stack : error);
-    return errorResponse(error);
-}
+  } catch (error) { return errorResponse(error); }
 }
 
 function adminEnabled(env: WorkerEnv): boolean { return env.ALLOW_ADMIN_MUTATIONS === "true"; }

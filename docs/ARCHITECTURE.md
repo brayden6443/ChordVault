@@ -8,6 +8,8 @@ Cloudflare Access is the administrator identity and session provider. Access per
 
 `worker/index.ts` applies that check to `/review`, `/review/`, `/review.html`, and every `/api/admin/*` request. Public published-chord reads remain anonymous. Private responses are non-cacheable and carry defensive response headers. State-changing administrator routes also require the existing `ALLOW_ADMIN_MUTATIONS=true` binding, so authentication and the operational write switch are separate controls. Verified email addresses are attached to D1 audit entries by `worker/d1-repository.ts`.
 
+Cloudflare invokes a module Worker as `fetch(request, env, ctx)`. The default export uses a two-argument wrapper that forwards only `request` and `env` into `handleRequest`. This keeps the runtime `ExecutionContext` separate from the third application-only dependency-injection parameter while preserving explicit dependency injection in tests.
+
 Cloudflare Access owns session duration, expiry, revocation, and logout. The review page's logout link uses the application-domain Access logout endpoint. Access dashboard policy should allow only the same specific administrator emails as the Worker's `ADMIN_EMAILS` allowlist; the Worker allowlist is the final authorization boundary.
 
 ## Persisted chord contract (schema version 1)

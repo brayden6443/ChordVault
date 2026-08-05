@@ -100,6 +100,19 @@ test("exported fetch does not pass Cloudflare ExecutionContext into dependency i
   await mf.dispose();
 });
 
+test("administrator session returns only minimal identity with private security headers", async () => {
+  const { mf, db } = await database();
+  const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
+  const response = await handleApi(new Request("https://example.test/api/admin/session"), env, adminDependencies);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { administrator: { email: "admin@example.test" }, expiresAt: 2_000_000_000 });
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+  assert.equal(response.headers.get("X-Frame-Options"), "DENY");
+  assert.match(response.headers.get("Vary") ?? "", /Cf-Access-Jwt-Assertion/);
+  await mf.dispose();
+});
+
 test("authenticated non-admin users cannot access review or mutate", async () => {
   const { mf, db } = await database(); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "true", ASSETS: { fetch: async () => new Response("private review") } } as WorkerEnv;
   const ordinaryUser = { authenticate: async () => ({ ok: false as const, status: 403 as const, code: "AUTH_FORBIDDEN" as const }) };
