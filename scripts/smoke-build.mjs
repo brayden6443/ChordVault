@@ -1,6 +1,6 @@
 import { access, stat } from "node:fs/promises";
 
-const requiredBuildFiles = ["dist/index.html", "dist/review.html"];
+const requiredBuildFiles = ["dist/index.html", "dist/chord.html", "dist/review.html"];
 
 for (const file of requiredBuildFiles) {
   await access(file);

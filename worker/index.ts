@@ -1,5 +1,6 @@
 import { authenticateAdmin, type AdminPrincipal, type AuthenticationResult } from "./auth.ts";
 import { D1ChordStore, HostedDataError } from "./d1-repository.ts";
+import { toPublicChordDetails } from "../src/chords/public-chord.ts";
 import type { WorkerEnv } from "./types.ts";
 
 interface WorkerDependencies { authenticate(request: Request, env: WorkerEnv): Promise<AuthenticationResult> }
@@ -56,6 +57,11 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
   if (!sameOrigin(request, url)) return json({ error: { code: "ORIGIN_DENIED", message: "Cross-origin requests are not allowed." } }, 403);
   try {
     if (request.method === "GET" && path === "/api/chords/published") return json({ records: await store.list("published") }, 200, true);
+    const chordSlugMatch = path.match(/^\/api\/chords\/slug\/([^/]+)$/);
+    if (request.method === "GET" && chordSlugMatch) {
+      const record = await store.getPublishedBySlug(decodeURIComponent(chordSlugMatch[1]));
+      return record ? json({ chord: toPublicChordDetails(record) }, 200, true) : json({ error: { code: "NOT_FOUND", message: "Chord not found." } }, 404, true);
+    }
     const chordMatch = path.match(/^\/api\/chords\/([^/]+)$/);
     if (request.method === "GET" && chordMatch) {
       const record = await store.get(decodeURIComponent(chordMatch[1]));
@@ -91,9 +97,36 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
 function adminEnabled(env: WorkerEnv): boolean { return env.ALLOW_ADMIN_MUTATIONS === "true"; }
 function isReviewPath(path: string): boolean { return path === "/review" || path === "/review/" || path === "/review.html"; }
 
+function escapeHtml(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
+
+async function chordPage(request: Request, env: WorkerEnv, url: URL, slug: string): Promise<Response> {
+  if (!env.ASSETS) return new Response("Not found", { status: 404 });
+  let record = null;
+  try { record = await new D1ChordStore(env.DB).getPublishedBySlug(slug); } catch { return errorResponse(new HostedDataError("DATABASE", "Chord query failed.")); }
+  const chord = record ? toPublicChordDetails(record) : null;
+  const name = chord?.chordName ?? "Chord not found";
+  const title = chord ? `${name} Guitar Chord | Diagram, Notes & Variations | Chord Vault` : "Chord Not Found | Chord Vault";
+  const description = chord
+    ? `Learn how to play the ${name} guitar chord with a diagram, finger positions, notes, and related chord ideas.`
+    : "The requested guitar chord could not be found in Chord Vault.";
+  const assetResponse = await env.ASSETS.fetch(new Request(new URL("/chord", url), request));
+  if (!assetResponse.ok) return assetResponse;
+  const canonicalUrl = `${url.origin}/chords/${encodeURIComponent(slug)}`;
+  const html = (await assetResponse.text())
+    .replaceAll("__CHORD_PAGE_TITLE__", escapeHtml(title))
+    .replaceAll("__CHORD_PAGE_DESCRIPTION__", escapeHtml(description))
+    .replaceAll("__CHORD_PAGE_NAME__", escapeHtml(name))
+    .replaceAll("__CHORD_PAGE_CANONICAL__", escapeHtml(canonicalUrl));
+  return new Response(html, { status: chord ? 200 : 404, headers: { ...securityHeaders, "Cache-Control": "public, max-age=60", "Content-Type": "text/html; charset=utf-8" } });
+}
+
 export async function handleRequest(request: Request, env: WorkerEnv, dependencies: WorkerDependencies = defaultDependencies): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname.startsWith("/api/")) return handleApi(request, env, dependencies);
+  const chordRoute = url.pathname.match(/^\/chords\/([^/]+)\/?$/);
+  if (request.method === "GET" && chordRoute) return chordPage(request, env, url, decodeURIComponent(chordRoute[1]));
   if (isReviewPath(url.pathname)) {
     const principal = await requireAdmin(request, env, dependencies);
     if (principal instanceof Response) return principal;

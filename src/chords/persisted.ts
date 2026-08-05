@@ -1,6 +1,7 @@
 import { analyzePlayability } from "./playability.ts";
 import { recipeById, requireRecipe, type RecipeId } from "./recipes.ts";
 import { scoreVoicing } from "./scoring.ts";
+import { chordSlug } from "./slug.ts";
 import { bassPitch, intervalsRelativeToRoot, inversionForPitches, pitchClassFromName, pitchClassName, pitchesForVoicing, reliableAlternateChordNames } from "./theory.ts";
 import type { ChordVoicing, ShapeFamily, Tuning, VoicingCategory } from "./types.ts";
 
@@ -116,8 +117,6 @@ export function safeParseJson(text: string): ValidationResult<unknown> {
   catch (error) { return { ok: false, issues: [{ path: "$", message: `malformed JSON: ${error instanceof Error ? error.message : "parse failure"}` }] }; }
 }
 
-function slugify(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
-
 export function hydratePersistedChord(record: PersistedChordRecordV1): ChordVoicing {
   const validated = validatePersistedChord(record);
   if (!validated.ok) throw new Error(validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; "));
@@ -128,7 +127,7 @@ export function hydratePersistedChord(record: PersistedChordRecordV1): ChordVoic
   const scored = scoreVoicing(pitches, intervals, analysis, { tuning: value.tuning, chordName, chordQuality: recipe.id, root, requiredTones: [...recipe.requiredIntervals], optionalTones: [...recipe.optionalIntervals] });
   const bass = bassPitch(pitches); const catalog = value.catalog;
   return {
-    id: value.id, slug: `${slugify(chordName)}-${slugify(value.id)}`, chordName, chordQuality: recipe.id, root, tuning: value.tuning,
+    id: value.id, slug: chordSlug(chordName, value.id), chordName, chordQuality: recipe.id, root, tuning: value.tuning,
     fretPositions: [...value.fretPositions], fingerPositions: value.fingerPositions ? [...value.fingerPositions] : undefined,
     notes: pitches.map((pitch) => pitch.note), intervals, bassNote: bass?.note ?? "", inversion: inversionForPitches(pitches, root),
     alternateNames: reliableAlternateChordNames(root, intervals, chordName), fretSpan: analysis.fretSpan,

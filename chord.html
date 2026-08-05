@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="__CHORD_PAGE_DESCRIPTION__" />
+    <link rel="canonical" href="__CHORD_PAGE_CANONICAL__" />
+    <title>__CHORD_PAGE_TITLE__</title>
+    <link rel="icon" href="data:," />
+    <script>document.documentElement.dataset.theme=localStorage.getItem('chord-vault-theme')||'dark'</script>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/src/chord-page.css" />
+  </head>
+  <body>
+    <main>
+      <nav class="shell nav chord-page-nav" aria-label="Primary navigation">
+        <a class="brand" href="/">THE CHORD VAULT</a>
+        <a class="back-to-vault" href="/">Browse chords</a>
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to light mode">Light</button>
+      </nav>
+
+      <article class="shell chord-detail" id="chordDetail" aria-labelledby="chordPageName">
+        <header class="chord-detail-header">
+          <p class="eyebrow">GUITAR CHORD</p>
+          <h1 id="chordPageName">__CHORD_PAGE_NAME__</h1>
+          <p class="chord-detail-description" id="chordDescription">Loading chord details…</p>
+        </header>
+        <div class="chord-detail-layout" id="chordContent" aria-live="polite">
+          <div class="chord-detail-diagram" id="chordDiagram" aria-hidden="true"></div>
+          <dl class="chord-facts" id="chordFacts"></dl>
+        </div>
+        <section class="related-chords" aria-labelledby="relatedTitle">
+          <p class="eyebrow">KEEP EXPLORING</p>
+          <h2 id="relatedTitle">Related chords</h2>
+          <p>Related voicings are coming soon. Return to the vault to explore more shapes by note, mood, and chord recipe.</p>
+          <a href="/">Browse the chord vault</a>
+        </section>
+      </article>
+
+      <section class="shell chord-not-found" id="chordNotFound" hidden>
+        <p class="eyebrow">CHORD NOT FOUND</p>
+        <h1>That chord isn’t in the vault.</h1>
+        <p>It may have moved or may not be published yet.</p>
+        <a href="/">Return to the chord vault</a>
+      </section>
+
+      <footer class="shell"><a class="brand" href="/">THE CHORD VAULT</a><p>Made for curious guitarists.</p></footer>
+    </main>
+    <script type="module" src="/src/chord-page.ts"></script>
+  </body>
+</html>

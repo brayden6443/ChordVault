@@ -1,26 +1,11 @@
 import { CANONICAL_VOICINGS } from './src/chords/canonical.ts';
 import { createChordRepository } from './src/chords/repository-composition.ts';
 import { recipeById, recipeIdFromChordName } from './src/chords/recipes.ts';
+import { displayBarre } from './src/chords/diagram.ts';
+import { chordSlug } from './src/chords/slug.ts';
 
 const {repository:chordRepository,capabilities:repositoryCapabilities}=await createChordRepository({localStorage,sessionStorage,env:import.meta.env});
 const repositoryWorkspace=chordRepository.loadWorkspace();
-
-function displayBarre(frets){
-  const fretted=frets.filter(fret=>fret>0);
-  const commonPartialBarre=COMMON_PARTIAL_BARRES.has(frets.join('-'));
-  if(fretted.length<=4&&!commonPartialBarre)return null;
-  const fret=Math.min(...fretted);
-  const matching=frets.flatMap((value,index)=>value===fret?[index]:[]);
-  if(matching.length<2)return null;
-  const from=Math.min(...matching);
-  const to=Math.max(...matching);
-  const uninterrupted=frets.slice(from,to+1).every(value=>value>0&&value>=fret);
-  return uninterrupted?{fret,from,to}:null;
-}
-
-const COMMON_PARTIAL_BARRES=new Set([
-  '-1--1-0-2-1-1',
-]);
 
 const COMMON_OPEN_FINGERS=new Map([
   ['-1-3-2-0-1-0',['','3','2','','1','']],
@@ -131,13 +116,14 @@ const publishedVoicings=repositoryWorkspace.published.map(voicing=>{
   return {...voicing,moodTags:descriptorTags.filter(tag=>MOOD_TAGS.has(tag)),genreTags:[],descriptorTags};
 });
 const publishedChords=publishedVoicings.map(voicing=>({
-  id:voicing.id,name:voicing.chordName,
+  id:voicing.id,slug:voicing.slug,name:voicing.chordName,
   notes:voicing.fretPositions.map((fret,index)=>fret===null?'×':voicing.notes[voicing.fretPositions.slice(0,index+1).filter(value=>value!==null).length-1]).join(' · '),
   moods:normalizedMoodTags([...(voicing.moodTags??[]),...(voicing.genreTags??[])]),style:normalizedMoodTags(voicing.genreTags??[])[0]??'Approved',difficulty:voicing.difficulty,
   frets:voicing.fretPositions.map(fret=>fret??-1),fingers:inferredFingers(voicing.fretPositions.map(fret=>fret??-1),voicing.fingerPositions??[]),
   tones:voicing.fretPositions.flatMap((fret,index)=>fret===null?[]:[440*2**((voicing.tuning.strings[index].midi+fret-69)/12)]),
   chordQuality:voicing.chordQuality,root:voicing.root,category:'Other Approved',displayPriority:100,movable:voicing.movable??false,descriptorTags:voicing.descriptorTags,
 }));
+const publishedSlugByKey=new Map(publishedChords.map(chord=>[`${chord.name}|${chord.frets.join('-')}`,chord.slug]));
 const publishedKeys=new Set(publishedChords.map(chord=>`${chord.name}|${chord.frets.join('-')}`));
 const chordRecords=[...canonicalChords,...publishedChords.filter(chord=>!canonicalKeys.has(`${chord.name}|${chord.frets.join('-')}`)),...curatedChords.filter(chord=>!canonicalKeys.has(`${chord.name}|${chord.frets.join('-')}`)&&!publishedKeys.has(`${chord.name}|${chord.frets.join('-')}`)).map(chord=>({...chord,category:'Other Approved',displayPriority:100}))]
   .sort((left,right)=>(left.category==='Essential Open'?10:left.category==='Essential Barre'?20:100)-(right.category==='Essential Open'?10:right.category==='Essential Barre'?20:100)
@@ -146,7 +132,8 @@ const libraryEdits=repositoryWorkspace.libraryEdits;
 const allChords=chordRecords.map((chord,index)=>{
   const libraryKey=chord.id??`curated:${chord.name}:${chord.frets.join('-')}`;
   const edit=libraryEdits[libraryKey];
-  return {...chord,id:libraryKey,vaultIndex:index+1,rootKey:chordRoot(chord),qualityFamilyKey:qualityFamily(chord),recipeFamilyKey:recipeFamily(chord),difficulty:edit?.difficulty??chord.difficulty,descriptorTags:normalizedDisplayTags(edit?.descriptorTags??chord.descriptorTags??defaultDescriptorTags(chord))};
+  const publicSlug=publishedSlugByKey.get(`${chord.name}|${chord.frets.join('-')}`)??chordSlug(chord.name,libraryKey);
+  return {...chord,id:libraryKey,slug:publicSlug,vaultIndex:index+1,rootKey:chordRoot(chord),qualityFamilyKey:qualityFamily(chord),recipeFamilyKey:recipeFamily(chord),difficulty:edit?.difficulty??chord.difficulty,descriptorTags:normalizedDisplayTags(edit?.descriptorTags??chord.descriptorTags??defaultDescriptorTags(chord))};
 });
 chordRepository.savePublicLibrary(allChords.map(chord=>({key:chord.id,name:chord.name,root:chord.rootKey,chordQuality:chord.chordQuality,difficulty:chord.difficulty,descriptorTags:chord.descriptorTags,frets:chord.frets,fingers:chord.fingers,source:'Main Vault'})));
 const finalApprovedKeys=new Set(repositoryWorkspace.publishedKeys);
@@ -287,6 +274,7 @@ function render() {
   grid.innerHTML=visibleChords.map((c)=>{const n=c.vaultIndex; const isSaved=saved.has(c.name); return `<article class="chord-card">
     <span class="card-number">${String(n).padStart(2,'0')}</span><button class="heart ${isSaved?'is-saved':''}" data-save="${c.name}" aria-label="${isSaved?'Remove':'Add'} ${c.name} ${isSaved?'from':'to'} favorites">${isSaved?'♥':'♡'}</button>
     <div class="card-title"><div><h3>${c.name}</h3><p>${c.notes}</p></div><button class="play" data-play="${c.name}" aria-label="Play ${c.name}">▶</button></div>
+    <a class="chord-name-link" href="/chords/${encodeURIComponent(c.slug)}" aria-label="View ${c.name} chord details">${c.name}</a>
     ${diagram(c)}<div class="card-footer"><div class="tags">${c.descriptorTags.map(tag=>`<span class="${tag==='Essential'?'essential-badge':''}">${tag}</span>`).join('')}</div><span class="difficulty" aria-label="Difficulty ${c.difficulty} out of 4"><span class="difficulty-label">Difficulty</span>${[1,2,3,4].map(i=>`<i class="${i<=c.difficulty?'on':''}"></i>`).join('')}</span></div>
   </article>`}).join('');
   document.querySelector('#empty').hidden=shown.length>0;

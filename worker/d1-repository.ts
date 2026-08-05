@@ -39,6 +39,11 @@ export class D1ChordStore {
     return row ? parseRow(row) : null;
   }
 
+  async getPublishedBySlug(slug: string): Promise<PersistedChordRecordV1 | null> {
+    const published = await this.list("published");
+    return published.find((record) => hydratePersistedChord(record).slug === slug) ?? null;
+  }
+
   private validated(value: unknown, status: PersistedWorkflowStatus): PersistedChordRecordV1 {
     const result = validatePersistedChord(value);
     if (!result.ok) {

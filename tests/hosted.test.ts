@@ -6,7 +6,7 @@ import { CANONICAL_VOICINGS } from "../src/chords/canonical.ts";
 import { LocalStorageChordRepository, type StoragePort } from "../src/chords/chord-repository.ts";
 import { HostedReadChordRepository } from "../src/chords/hosted-repository.ts";
 import { backupThenUpload, prepareHostedImport } from "../src/chords/hosted-import.ts";
-import { persistChordVoicing } from "../src/chords/persisted.ts";
+import { hydratePersistedChord, persistChordVoicing } from "../src/chords/persisted.ts";
 import { createChordRepository, repositoryConfiguration } from "../src/chords/repository-composition.ts";
 import { D1ChordStore, HostedDataError } from "../worker/d1-repository.ts";
 import worker, { handleApi, handleRequest } from "../worker/index.ts";
@@ -75,6 +75,31 @@ test("disabled production mutations stay hidden while public API remains unauthe
   const { mf, db, store } = await database(); await store.publish(cRecord); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
   const publicResponse = await handleApi(new Request("https://example.test/api/chords/published"), env); assert.equal(publicResponse.status, 200); assert.equal(((await publicResponse.json()) as { records: unknown[] }).records.length, 1);
   const mutation = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/reject`, { method: "POST" }), env, adminDependencies); assert.equal(mutation.status, 404); await mf.dispose();
+});
+
+test("published chords have a public slug endpoint while unpublished chords remain hidden", async () => {
+  const { mf, db, store } = await database();
+  await store.publish(cRecord);
+  await store.preReview({ ...dRecord, workflowStatus: "pre-reviewed" });
+  const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
+  const slug = hydratePersistedChord(cRecord).slug;
+  const response = await handleApi(new Request(`https://example.test/api/chords/slug/${slug}`), env);
+  const payload = await response.json() as { chord: { id: string; slug: string; notes: string[]; qualityScore?: number } };
+  assert.equal(response.status, 200); assert.equal(payload.chord.id, cRecord.id); assert.equal(payload.chord.slug, slug); assert.ok(payload.chord.notes.length > 0); assert.equal(payload.chord.qualityScore, undefined);
+  const hiddenSlug = hydratePersistedChord({ ...dRecord, workflowStatus: "pre-reviewed" }).slug;
+  assert.equal((await handleApi(new Request(`https://example.test/api/chords/slug/${hiddenSlug}`), env)).status, 404);
+  await mf.dispose();
+});
+
+test("dynamic chord routes render SEO metadata and a friendly 404", async () => {
+  const { mf, db, store } = await database(); await store.publish(cRecord);
+  const template = "<title>__CHORD_PAGE_TITLE__</title><meta content=\"__CHORD_PAGE_DESCRIPTION__\"><link href=\"__CHORD_PAGE_CANONICAL__\"><h1>__CHORD_PAGE_NAME__</h1>";
+  const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false", ASSETS: { fetch: async () => new Response(template, { headers: { "Content-Type": "text/html" } }) } } as WorkerEnv;
+  const slug = hydratePersistedChord(cRecord).slug;
+  const found = await handleRequest(new Request(`https://example.test/chords/${slug}`), env); const html = await found.text();
+  assert.equal(found.status, 200); assert.match(html, /C Guitar Chord \| Diagram, Notes &amp; Variations \| Chord Vault/); assert.match(html, new RegExp(`https://example\\.test/chords/${slug}`)); assert.match(html, /<h1>C<\/h1>/);
+  const missing = await handleRequest(new Request("https://example.test/chords/not-real"), env); assert.equal(missing.status, 404); assert.match(await missing.text(), /Chord not found/);
+  await mf.dispose();
 });
 
 test("API maps invalid payloads without leaking internals", async () => {
