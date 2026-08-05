@@ -470,6 +470,37 @@ function persistLibraryEdit(item: LibraryItem, update: { difficulty?: number; de
   }
 }
 
+async function saveLibraryEdit(item: LibraryItem, card: HTMLElement): Promise<void> {
+  const button = card.querySelector<HTMLButtonElement>(".library-save-button");
+  const status = card.querySelector<HTMLElement>(".library-save-status");
+  if (!button || !status) return;
+  button.disabled = true;
+  status.textContent = "Saving...";
+  try {
+    const edited = editedLibraryItem(item);
+    if (item.source === "Main Vault") {
+      const response = await fetch(`/api/admin/chords/${encodeURIComponent(item.key)}/edit`, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ difficulty: edited.difficulty, tags: edited.descriptorTags }),
+      });
+      if (!response.ok) throw new Error(`Save failed with status ${response.status}`);
+      const published = publishedVault.find((voicing) => voicing.id === item.key);
+      if (published) {
+        published.difficulty = edited.difficulty as 1 | 2 | 3 | 4 | 5;
+        published.descriptorTags = [...edited.descriptorTags];
+      }
+      status.textContent = "Saved to Main Vault";
+    } else {
+      status.textContent = "Saved in workspace";
+    }
+  } catch {
+    status.textContent = "Could not save. Please try again.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function libraryDiagram(item: LibraryItem): string {
   if (!item.frets?.length) return `<p class="library-chart-unavailable">Chart unavailable</p>`;
   const xs = [24, 48, 72, 96, 120, 144];
@@ -572,6 +603,8 @@ function renderLibraryEditor(): void {
       <div class="editable-tags">${item.descriptorTags.map((tag) => `<button class="editable-tag" type="button" data-remove-tag="${encodeURIComponent(tag)}" aria-label="Remove ${escapeHtml(tag)}"><span>${escapeHtml(tag)}</span><b>×</b></button>`).join("")}
       <button class="add-tag-button" type="button" aria-label="Add descriptor to ${escapeHtml(item.name)}">+</button>
       <select class="tag-picker" aria-label="Choose descriptor" hidden><option value="">Choose tag</option>${addable.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("")}</select></div>
+      <div class="library-card-actions"><button class="library-play-button" type="button" aria-label="Play ${escapeHtml(item.name)} chord">Play chord</button><button class="library-save-button" type="button">Save changes</button></div>
+      <span class="library-save-status" role="status" aria-live="polite"></span>
       ${item.source === "Pre-reviewed" || item.source === "Unapproved" ? `<button class="final-approve-button" type="button">Final approve <span>+</span></button>` : `<span class="published-label">Already in Main Vault</span>`}
     </article>`;
   }).join("") : `<p class="library-empty">No chords are available in this view.</p>`;
@@ -598,6 +631,9 @@ libraryGrid.addEventListener("change", (event) => {
     const edited = editedLibraryItem(item);
     persistLibraryEdit(item, { descriptorTags: [...new Set([...edited.descriptorTags, target.value])] });
     renderLibraryEditor();
+    const updatedCard = [...libraryGrid.querySelectorAll<HTMLElement>("[data-library-key]")].find((candidate) => decodeURIComponent(candidate.dataset.libraryKey ?? "") === item.key);
+    const updatedPicker = updatedCard?.querySelector<HTMLSelectElement>(".tag-picker");
+    if (updatedPicker) { updatedPicker.hidden = false; updatedPicker.focus(); }
   }
 });
 
@@ -612,6 +648,14 @@ libraryGrid.addEventListener("click", (event) => {
     const picker = card.querySelector<HTMLSelectElement>(".tag-picker")!;
     picker.hidden = !picker.hidden;
     if (!picker.hidden) picker.focus();
+  }
+  if (button.classList.contains("library-play-button")) {
+    void play(libraryItemVoicing(editedLibraryItem(item)));
+    return;
+  }
+  if (button.classList.contains("library-save-button")) {
+    void saveLibraryEdit(item, card);
+    return;
   }
   if (button.dataset.removeTag) {
     const remove = decodeURIComponent(button.dataset.removeTag);

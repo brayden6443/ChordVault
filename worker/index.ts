@@ -76,12 +76,16 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     if (request.method === "GET" && path === "/api/admin/audit") return json({ entries: await store.auditLog() });
     if (request.method === "GET" && path === "/api/admin/quarantine") return json({ records: await store.quarantine() });
     if (request.method === "GET" && path === "/api/admin/backups") return json({ records: [...await store.list("pre-reviewed"), ...await store.list("published"), ...await store.list("rejected")] });
+    const operation = path.match(/^\/api\/admin\/chords\/([^/]+)\/(pre-review|publish|reject|replace|merge|edit)$/);
+    if (operation?.[2] === "edit" && request.method === "POST" && editorialEnabled(env)) {
+      const id = decodeURIComponent(operation[1]);
+      return json({ record: await store.edit(id, await body(request), principal.email) });
+    }
     if (!adminEnabled(env)) return json({ error: { code: "NOT_FOUND", message: "Route not found." } }, 404);
     if (request.method === "POST" && path === "/api/admin/chords/import") {
       const value = await body(request) as { records?: unknown[]; dryRun?: boolean };
       return json({ report: await store.importRecords(Array.isArray(value.records) ? value.records : [], value.dryRun === true, principal.email) });
     }
-    const operation = path.match(/^\/api\/admin\/chords\/([^/]+)\/(pre-review|publish|reject|replace|merge|edit)$/);
     if (!operation || request.method !== "POST") return json({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed." } }, 405);
     const id = decodeURIComponent(operation[1]); const action = operation[2];
     if (action === "reject") { await store.reject(id, principal.email); return json({ ok: true }); }
@@ -95,6 +99,7 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
 }
 
 function adminEnabled(env: WorkerEnv): boolean { return env.ALLOW_ADMIN_MUTATIONS === "true"; }
+function editorialEnabled(env: WorkerEnv): boolean { return env.ALLOW_EDITORIAL_MUTATIONS === "true"; }
 function isReviewPath(path: string): boolean { return path === "/review" || path === "/review/" || path === "/review.html"; }
 
 function escapeHtml(value: string): string {

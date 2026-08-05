@@ -8,7 +8,8 @@
 		"binding": "ASSETS"
 	},
 	"vars": {
-		"ALLOW_ADMIN_MUTATIONS": "false"
+		"ALLOW_ADMIN_MUTATIONS": "false",
+		"ALLOW_EDITORIAL_MUTATIONS": "true"
 	},
 	"d1_databases": [
 		{

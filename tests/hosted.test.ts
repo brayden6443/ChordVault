@@ -158,6 +158,16 @@ test("authenticated administrator can load review, edit and publish with attribu
   assert.ok((await store.auditLog()).every((entry) => entry.actor_identifier === "admin@example.test")); await mf.dispose();
 });
 
+test("authenticated editorial saves work without enabling broader administrator mutations", async () => {
+  const { mf, db, store } = await database(); await store.publish(cRecord);
+  const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false", ALLOW_EDITORIAL_MUTATIONS: "true" } as WorkerEnv;
+  const edit = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/edit`, { method: "POST", body: JSON.stringify({ difficulty: 3, tags: ["Warm", "Jazz"] }) }), env, adminDependencies);
+  assert.equal(edit.status, 200);
+  const updated = await store.get(cRecord.id); assert.equal(updated?.difficulty, 3); assert.deepEqual(updated?.tags, ["Warm", "Jazz"]);
+  const publish = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/publish`, { method: "POST", body: JSON.stringify(cRecord) }), env, adminDependencies);
+  assert.equal(publish.status, 404); await mf.dispose();
+});
+
 test("logout redirects to the Cloudflare Access application logout endpoint", async () => {
   const { mf, db } = await database(); const response = await handleApi(new Request("https://example.test/api/admin/logout"), { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv);
   assert.equal(response.status, 302); assert.equal(response.headers.get("Location"), "https://example.test/cdn-cgi/access/logout"); await mf.dispose();
@@ -167,6 +177,8 @@ test("adapter selection is centralized and hosted records are runtime validated"
   assert.equal(repositoryConfiguration({}).mode, "local"); assert.equal(repositoryConfiguration({ PROD: true }).mode, "hosted"); assert.equal(repositoryConfiguration({ PROD: true, VITE_CHORD_REPOSITORY: "local" }).mode, "local");
   const local = new MemoryStorage(); const selection = await createChordRepository({ localStorage: local, sessionStorage: local, env: { VITE_CHORD_REPOSITORY: "hosted" }, fetcher: async () => Response.json({ records: [cRecord] }) });
   assert.equal(selection.capabilities.backend, "hosted"); assert.deepEqual(selection.repository.listPublishedVoicings().map((item) => item.id), [cRecord.id]); assert.throws(() => selection.repository.publishVoicing(cMajor));
+  selection.repository.updateEditorialFields(cRecord.id, { difficulty: 4, descriptorTags: ["Warm", "Jazz"] });
+  assert.deepEqual(selection.repository.loadWorkspace().libraryEdits[cRecord.id], { difficulty: 4, descriptorTags: ["Warm", "Jazz"] });
   assert.ok(selection.repository instanceof HostedReadChordRepository); assert.ok(new LocalStorageChordRepository(new MemoryStorage()));
 });
 

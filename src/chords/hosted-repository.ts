@@ -25,7 +25,7 @@ export class HostedReadChordRepository implements ChordRepository {
   savePublicLibrary(items: PublicLibraryItem[]): void { this.local.savePublicLibrary(items); }
   saveReview(id: string, review: SavedReview): void { this.local.saveReview(id, review); }
   importPreReviewed(): void { this.disabled(); }
-  updateEditorialFields(): void { this.disabled(); }
+  updateEditorialFields(id: string, edit: Parameters<ChordRepository["updateEditorialFields"]>[1]): void { this.local.updateEditorialFields(id, edit); }
   moveToPreReviewed(): void { this.disabled(); }
   publishVoicing(): void { this.disabled(); }
   approvePublicVoicing(): void { this.disabled(); }

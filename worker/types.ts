@@ -14,6 +14,7 @@ export interface WorkerEnv {
   DB: D1Database;
   ASSETS?: { fetch(request: Request): Promise<Response> };
   ALLOW_ADMIN_MUTATIONS: string;
+  ALLOW_EDITORIAL_MUTATIONS?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   ADMIN_EMAILS?: string;
