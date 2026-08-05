@@ -1,0 +1,21 @@
+.chord-detail-description{display:none}
+.chord-detail-tuning{color:var(--muted);font:16px/1.65 var(--serif);margin:24px 0 0}
+.chord-detail-layout{grid-template-rows:auto auto;gap:16px clamp(34px,7vw,72px);padding-top:48px}
+.chord-detail-diagram{grid-column:1;grid-row:1;min-height:400px;padding:32px}
+.chord-detail-diagram .chord-diagram{max-width:290px}
+.chord-detail-tags{display:flex;flex-wrap:wrap;gap:8px;grid-column:1;grid-row:2}
+.chord-detail-tags span{border:1px solid var(--line);color:var(--muted);font-size:10px;letter-spacing:.12em;padding:8px 10px;text-transform:uppercase}
+.chord-facts{align-self:start;grid-column:2;grid-row:1 / span 2}
+.chord-facts dt,.chord-facts dd{align-items:center;display:flex;min-height:72px;padding:18px 0}
+.fact-intervals,.fact-fingers,.fact-tags{display:none!important}
+.chord-difficulty{display:flex;gap:5px;width:min(100%,230px)}
+.chord-difficulty i{background:var(--line);display:block;flex:1;height:3px}
+.chord-difficulty i.on{background:var(--lime)}
+
+@media(max-width:760px){
+  .chord-detail-layout{gap:16px;grid-template-rows:auto auto auto;padding-top:34px}
+  .chord-detail-diagram{grid-column:1;grid-row:1;min-height:330px;padding:24px}
+  .chord-detail-tags{grid-column:1;grid-row:2;padding-bottom:16px}
+  .chord-facts{grid-column:1;grid-row:3}
+  .chord-facts dt,.chord-facts dd{min-height:64px;padding:15px 0}
+}

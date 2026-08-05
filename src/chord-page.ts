@@ -12,7 +12,15 @@ function text(value: string): Text { return document.createTextNode(value); }
 function fact(term: string, value: string): DocumentFragment {
   const fragment = document.createDocumentFragment();
   const dt = document.createElement("dt"); const dd = document.createElement("dd");
-  dt.append(text(term)); dd.append(text(value)); fragment.append(dt, dd); return fragment;
+  const className = `fact-${term.toLowerCase().replaceAll(" ", "-")}`;
+  dt.className = className; dd.className = className; dt.append(text(term));
+  if (term === "Difficulty") {
+    const meter = document.createElement("span"); meter.className = "chord-difficulty";
+    meter.setAttribute("role", "img"); meter.setAttribute("aria-label", `Difficulty ${value} out of 5`);
+    for (let level = 1; level <= 5; level += 1) { const segment = document.createElement("i"); if (level <= Number.parseInt(value, 10)) segment.className = "on"; meter.append(segment); }
+    dd.append(meter);
+  } else dd.append(text(value));
+  fragment.append(dt, dd); return fragment;
 }
 
 function formatStrings(values: Array<number | null>, muted = "×"): string {
@@ -21,11 +29,17 @@ function formatStrings(values: Array<number | null>, muted = "×"): string {
 
 function render(chord: PublicChordDetails): void {
   document.querySelector<HTMLElement>("#chordPageName")!.textContent = chord.chordName;
+  document.querySelector<HTMLElement>("#chordTuning")!.textContent = `${chord.tuningName} tuning`;
   document.querySelector<HTMLElement>("#chordDescription")!.textContent = chord.description || `A ${chord.chordName} voicing in ${chord.tuningName} tuning.`;
   const frets = chord.fretPositions.map((fret) => fret ?? -1);
   const fingers = inferFingerLabels(frets, chord.fingerPositions);
   document.querySelector<HTMLElement>("#chordDiagram")!.innerHTML = renderChordDiagram({ name: chord.chordName, frets, fingers });
   document.querySelector<HTMLElement>("#chordDiagram")!.removeAttribute("aria-hidden");
+
+  const tags = document.querySelector<HTMLElement>("#chordTags")!;
+  tags.replaceChildren(...chord.tags.map((tag) => {
+    const badge = document.createElement("span"); badge.textContent = tag; return badge;
+  }));
 
   const facts = document.querySelector<HTMLDListElement>("#chordFacts")!;
   facts.replaceChildren(

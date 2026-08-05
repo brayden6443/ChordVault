@@ -10,6 +10,7 @@
     <script>document.documentElement.dataset.theme=localStorage.getItem('chord-vault-theme')||'dark'</script>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/src/chord-page.css" />
+    <link rel="stylesheet" href="/src/chord-page-layout.css" />
   </head>
   <body>
     <main>
@@ -23,10 +24,12 @@
         <header class="chord-detail-header">
           <p class="eyebrow">GUITAR CHORD</p>
           <h1 id="chordPageName">__CHORD_PAGE_NAME__</h1>
+          <p class="chord-detail-tuning" id="chordTuning">Loading tuning…</p>
           <p class="chord-detail-description" id="chordDescription">Loading chord details…</p>
         </header>
         <div class="chord-detail-layout" id="chordContent" aria-live="polite">
           <div class="chord-detail-diagram" id="chordDiagram" aria-hidden="true"></div>
+          <div class="chord-detail-tags" id="chordTags" aria-label="Chord tags"></div>
           <dl class="chord-facts" id="chordFacts"></dl>
         </div>
         <section class="related-chords" aria-labelledby="relatedTitle">
