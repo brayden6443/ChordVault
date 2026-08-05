@@ -30,6 +30,9 @@ function authFailure(result: Exclude<AuthenticationResult, { ok: true }>): Respo
 
 async function requireAdmin(request: Request, env: WorkerEnv, dependencies: WorkerDependencies): Promise<AdminPrincipal | Response> {
   const result = await dependencies.authenticate(request, env);
+
+  console.log("AUTH RESULT:", JSON.stringify(result));
+
   return result.ok ? result.principal : authFailure(result);
 }
 
@@ -63,7 +66,10 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     }
     if (request.method === "GET" && path === "/api/admin/logout") return Response.redirect(new URL("/cdn-cgi/access/logout", url.origin), 302);
     if (!path.startsWith("/api/admin/")) return json({ error: { code: "NOT_FOUND", message: "Route not found." } }, 404);
-    const principal = await requireAdmin(request, env, dependencies); if (principal instanceof Response) return principal;
+    const principal = await requireAdmin(request, env, dependencies);
+    if (principal instanceof Response) return principal;
+
+    console.log("ADMIN PRINCIPAL:", JSON.stringify(principal));
     if (request.method === "GET" && path === "/api/admin/session") return json({ administrator: { email: principal.email }, expiresAt: principal.expiresAt });
     if (request.method === "GET" && path === "/api/admin/chords/pre-reviewed") return json({ records: await store.list("pre-reviewed") });
     if (request.method === "GET" && path === "/api/admin/audit") return json({ entries: await store.auditLog() });
@@ -84,7 +90,10 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     if (action === "replace") return json({ record: await store.replace(id, value, principal.email) });
     if (action === "edit") return json({ record: await store.edit(id, value, principal.email) });
     return json({ record: await store.merge(id, value, principal.email) });
-  } catch (error) { return errorResponse(error); }
+    } catch (error) {
+    console.log("ERROR:", error instanceof Error ? error.stack : error);
+    return errorResponse(error);
+}
 }
 
 function adminEnabled(env: WorkerEnv): boolean { return env.ALLOW_ADMIN_MUTATIONS === "true"; }

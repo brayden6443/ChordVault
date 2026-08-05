@@ -1,15 +1,31 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "chord-vault",
-  "main": "worker/index.ts",
-  "compatibility_date": "2026-08-03",
-  "assets": { "directory": "./dist", "binding": "ASSETS" },
-  "vars": { "ALLOW_ADMIN_MUTATIONS": "false" },
-  "d1_databases": [{
-    "binding": "DB",
-    "database_name": "chordvault",
-    "database_id": "cc3c9acf-622f-4229-b13f-58d08e49d519",
-    "migrations_dir": "migrations",
-    "migrations_table": "d1_migrations"
-  }]
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "chord-vault",
+	"main": "worker/index.ts",
+	"compatibility_date": "2026-08-03",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	"vars": {
+		"ALLOW_ADMIN_MUTATIONS": "false"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "chordvault",
+			"database_id": "cc3c9acf-622f-4229-b13f-58d08e49d519",
+			"migrations_dir": "migrations",
+			"migrations_table": "d1_migrations"
+		}
+	],
+	"routes": [
+		{
+			"pattern": "thechordvault.com",
+			"zone_name": "thechordvault.com",
+			"custom_domain": true,
+			"enabled": true,
+			"previews_enabled": false
+		}
+	]
 }
