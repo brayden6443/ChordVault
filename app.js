@@ -2,7 +2,7 @@ import { CANONICAL_VOICINGS } from './src/chords/canonical.ts';
 import { createChordRepository } from './src/chords/repository-composition.ts';
 import { recipeById, recipeIdFromChordName } from './src/chords/recipes.ts';
 import { displayBarre } from './src/chords/diagram.ts';
-import { chordSlug } from './src/chords/slug.ts';
+import { legacyChordSlug } from './src/chords/slug.ts';
 
 const {repository:chordRepository,capabilities:repositoryCapabilities}=await createChordRepository({localStorage,sessionStorage,env:import.meta.env});
 const repositoryWorkspace=chordRepository.loadWorkspace();
@@ -132,7 +132,7 @@ const libraryEdits=repositoryWorkspace.libraryEdits;
 const allChords=chordRecords.map((chord,index)=>{
   const libraryKey=chord.id??`curated:${chord.name}:${chord.frets.join('-')}`;
   const edit=libraryEdits[libraryKey];
-  const publicSlug=publishedSlugByKey.get(`${chord.name}|${chord.frets.join('-')}`)??chordSlug(chord.name,libraryKey);
+  const publicSlug=publishedSlugByKey.get(`${chord.name}|${chord.frets.join('-')}`)??chord.slug??legacyChordSlug(chord.name,libraryKey);
   return {...chord,id:libraryKey,slug:publicSlug,vaultIndex:index+1,rootKey:chordRoot(chord),qualityFamilyKey:qualityFamily(chord),recipeFamilyKey:recipeFamily(chord),difficulty:edit?.difficulty??chord.difficulty,descriptorTags:normalizedDisplayTags(edit?.descriptorTags??chord.descriptorTags??defaultDescriptorTags(chord))};
 });
 chordRepository.savePublicLibrary(allChords.map(chord=>({key:chord.id,name:chord.name,root:chord.rootKey,chordQuality:chord.chordQuality,difficulty:chord.difficulty,descriptorTags:chord.descriptorTags,frets:chord.frets,fingers:chord.fingers,source:'Main Vault'})));

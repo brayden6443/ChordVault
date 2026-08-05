@@ -1,5 +1,6 @@
 import { ChordRepositoryError, type AuditEntry, type ChordRepository, type PublicLibraryItem, type RepositoryWorkspace, type SavedReview } from "./chord-repository.ts";
 import { hydratePersistedChord, validatePersistedChord } from "./persisted.ts";
+import { withPublicSlugs } from "./slug.ts";
 import type { MigrationReport, QuarantinedChord } from "./migration.ts";
 import type { ChordVoicing } from "./types.ts";
 
@@ -12,7 +13,7 @@ export class HostedReadChordRepository implements ChordRepository {
   constructor(local: ChordRepository, records: unknown[], loadError?: string) {
     const published: ChordVoicing[] = [];
     for (const raw of records) { const result = validatePersistedChord(raw); if (!result.ok || result.value.workflowStatus !== "published") throw new ChordRepositoryError("SCHEMA_VALIDATION", "Hosted chord response failed validation."); published.push(hydratePersistedChord(result.value)); }
-    this.local = local; this.published = published; this.capabilities = { backend: "hosted", mutations: false, loadError };
+    this.local = local; this.published = withPublicSlugs(published); this.capabilities = { backend: "hosted", mutations: false, loadError };
   }
   private disabled(): never { throw new ChordRepositoryError("FAILED_WRITE", "Hosted publishing is disabled until administrator authentication is installed."); }
   loadWorkspace(): RepositoryWorkspace { const workspace = this.local.loadWorkspace(); return { ...workspace, published: [...this.published], publishedKeys: this.published.map((record) => record.id), preReviewed: [] }; }

@@ -1,9 +1,11 @@
 import { exactVoicingKey } from "../src/chords/identity.ts";
 import { hydratePersistedChord, validatePersistedChord, type PersistedChordRecordV1, type PersistedWorkflowStatus } from "../src/chords/persisted.ts";
+import { legacyChordSlug, withPublicSlugs } from "../src/chords/slug.ts";
 import type { D1Database, D1PreparedStatement } from "./types.ts";
 
 interface ChordRow { id: string; schema_version: number; record_json: string }
 export interface HostedImportReport { inserted: number; updated: number; skipped: number; duplicate: number; quarantined: number; failed: number; diagnostics: string[] }
+export interface PublishedSlugResolution { record: PersistedChordRecordV1; slug: string; legacy: boolean }
 
 export class HostedDataError extends Error {
   readonly code: "INVALID_RECORD" | "UNKNOWN_VERSION" | "DUPLICATE" | "NOT_FOUND" | "DATABASE";
@@ -39,9 +41,21 @@ export class D1ChordStore {
     return row ? parseRow(row) : null;
   }
 
-  async getPublishedBySlug(slug: string): Promise<PersistedChordRecordV1 | null> {
+  async resolvePublishedSlug(slug: string): Promise<PublishedSlugResolution | null> {
     const published = await this.list("published");
-    return published.find((record) => hydratePersistedChord(record).slug === slug) ?? null;
+    const chords = withPublicSlugs(published.map(hydratePersistedChord));
+    for (const chord of chords) {
+      const canonical = chord.slug === slug; const legacy = legacyChordSlug(chord.chordName, chord.id) === slug;
+      if (canonical || legacy) {
+        const record = published.find((candidate) => candidate.id === chord.id);
+        if (record) return { record, slug: chord.slug, legacy: !canonical && legacy };
+      }
+    }
+    return null;
+  }
+
+  async getPublishedBySlug(slug: string): Promise<PersistedChordRecordV1 | null> {
+    return (await this.resolvePublishedSlug(slug))?.record ?? null;
   }
 
   private validated(value: unknown, status: PersistedWorkflowStatus): PersistedChordRecordV1 {

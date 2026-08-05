@@ -1,7 +1,7 @@
 import { analyzePlayability } from "./playability.ts";
 import { recipeById, requireRecipe, type RecipeId } from "./recipes.ts";
 import { scoreVoicing } from "./scoring.ts";
-import { chordSlug } from "./slug.ts";
+import { semanticChordSlug } from "./slug.ts";
 import { bassPitch, intervalsRelativeToRoot, inversionForPitches, pitchClassFromName, pitchClassName, pitchesForVoicing, reliableAlternateChordNames } from "./theory.ts";
 import type { ChordVoicing, ShapeFamily, Tuning, VoicingCategory } from "./types.ts";
 
@@ -126,8 +126,8 @@ export function hydratePersistedChord(record: PersistedChordRecordV1): ChordVoic
   const analysis = analyzePlayability(value.fretPositions, { tuning: value.tuning, chordName, chordQuality: recipe.id, root, requiredTones: [...recipe.requiredIntervals], optionalTones: [...recipe.optionalIntervals], fretMin: 0, fretMax: 24, maxFretSpan: 24, maxFrettedNotes: 6, maxInternalMutedStrings: 6, maxAdjacentStretch: 24, minPlayedStrings: 1, allowOmitFifth: recipe.permittedOmissions.includes(7) });
   const scored = scoreVoicing(pitches, intervals, analysis, { tuning: value.tuning, chordName, chordQuality: recipe.id, root, requiredTones: [...recipe.requiredIntervals], optionalTones: [...recipe.optionalIntervals] });
   const bass = bassPitch(pitches); const catalog = value.catalog;
-  return {
-    id: value.id, slug: chordSlug(chordName, value.id), chordName, chordQuality: recipe.id, root, tuning: value.tuning,
+  const chord = {
+    id: value.id, slug: "", chordName, chordQuality: recipe.id, root, tuning: value.tuning,
     fretPositions: [...value.fretPositions], fingerPositions: value.fingerPositions ? [...value.fingerPositions] : undefined,
     notes: pitches.map((pitch) => pitch.note), intervals, bassNote: bass?.note ?? "", inversion: inversionForPitches(pitches, root),
     alternateNames: reliableAlternateChordNames(root, intervals, chordName), fretSpan: analysis.fretSpan,
@@ -137,7 +137,9 @@ export function hydratePersistedChord(record: PersistedChordRecordV1): ChordVoic
     possibleBarres: analysis.possibleBarres, shapeFamily: catalog?.shapeFamily, category: catalog?.category, source: value.provenance.source,
     isCanonical: catalog?.canonical, isEssential: catalog?.essential, displayPriority: catalog?.displayPriority,
     movable: catalog?.movable, baseShapeRoot: catalog?.baseShapeRoot, applicableRoots: catalog?.applicableRoots,
-  };
+  } satisfies ChordVoicing;
+  chord.slug = semanticChordSlug(chord);
+  return chord;
 }
 
 export function persistChordVoicing(voicing: ChordVoicing, workflowStatus?: PersistedWorkflowStatus): PersistedChordRecordV1 {

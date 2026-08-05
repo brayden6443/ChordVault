@@ -8,6 +8,7 @@ import { HostedReadChordRepository } from "../src/chords/hosted-repository.ts";
 import { backupThenUpload, prepareHostedImport } from "../src/chords/hosted-import.ts";
 import { hydratePersistedChord, persistChordVoicing } from "../src/chords/persisted.ts";
 import { createChordRepository, repositoryConfiguration } from "../src/chords/repository-composition.ts";
+import { legacyChordSlug } from "../src/chords/slug.ts";
 import { D1ChordStore, HostedDataError } from "../worker/d1-repository.ts";
 import worker, { handleApi, handleRequest } from "../worker/index.ts";
 import type { D1Database, WorkerEnv } from "../worker/types.ts";
@@ -99,6 +100,8 @@ test("dynamic chord routes render SEO metadata and a friendly 404", async () => 
   const found = await handleRequest(new Request(`https://example.test/chords/${slug}`), env); const html = await found.text();
   assert.equal(found.status, 200); assert.match(html, /C Guitar Chord \| Diagram, Notes &amp; Variations \| Chord Vault/); assert.match(html, new RegExp(`https://example\\.test/chords/${slug}`)); assert.match(html, /<h1>C<\/h1>/);
   const missing = await handleRequest(new Request("https://example.test/chords/not-real"), env); assert.equal(missing.status, 404); assert.match(await missing.text(), /Chord not found/);
+  const oldSlug = legacyChordSlug("C", cRecord.id); const redirect = await handleRequest(new Request(`https://example.test/chords/${oldSlug}`), env);
+  assert.equal(redirect.status, 301); assert.equal(redirect.headers.get("Location"), `https://example.test/chords/${slug}`);
   await mf.dispose();
 });
 

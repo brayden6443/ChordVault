@@ -59,8 +59,8 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     if (request.method === "GET" && path === "/api/chords/published") return json({ records: await store.list("published") }, 200, true);
     const chordSlugMatch = path.match(/^\/api\/chords\/slug\/([^/]+)$/);
     if (request.method === "GET" && chordSlugMatch) {
-      const record = await store.getPublishedBySlug(decodeURIComponent(chordSlugMatch[1]));
-      return record ? json({ chord: toPublicChordDetails(record) }, 200, true) : json({ error: { code: "NOT_FOUND", message: "Chord not found." } }, 404, true);
+      const resolution = await store.resolvePublishedSlug(decodeURIComponent(chordSlugMatch[1]));
+      return resolution ? json({ chord: toPublicChordDetails(resolution.record, resolution.slug) }, 200, true) : json({ error: { code: "NOT_FOUND", message: "Chord not found." } }, 404, true);
     }
     const chordMatch = path.match(/^\/api\/chords\/([^/]+)$/);
     if (request.method === "GET" && chordMatch) {
@@ -103,9 +103,10 @@ function escapeHtml(value: string): string {
 
 async function chordPage(request: Request, env: WorkerEnv, url: URL, slug: string): Promise<Response> {
   if (!env.ASSETS) return new Response("Not found", { status: 404 });
-  let record = null;
-  try { record = await new D1ChordStore(env.DB).getPublishedBySlug(slug); } catch { return errorResponse(new HostedDataError("DATABASE", "Chord query failed.")); }
-  const chord = record ? toPublicChordDetails(record) : null;
+  let resolution = null;
+  try { resolution = await new D1ChordStore(env.DB).resolvePublishedSlug(slug); } catch { return errorResponse(new HostedDataError("DATABASE", "Chord query failed.")); }
+  if (resolution?.legacy) return Response.redirect(new URL(`/chords/${encodeURIComponent(resolution.slug)}`, url.origin), 301);
+  const chord = resolution ? toPublicChordDetails(resolution.record, resolution.slug) : null;
   const name = chord?.chordName ?? "Chord not found";
   const title = chord ? `${name} Guitar Chord | Diagram, Notes & Variations | Chord Vault` : "Chord Not Found | Chord Vault";
   const description = chord

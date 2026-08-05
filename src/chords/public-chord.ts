@@ -19,11 +19,11 @@ export interface PublicChordDetails {
   possibleBarres: Array<{ fret: number; fromString: number; toString: number }>;
 }
 
-export function toPublicChordDetails(record: PersistedChordRecordV1): PublicChordDetails {
+export function toPublicChordDetails(record: PersistedChordRecordV1, publicSlug?: string): PublicChordDetails {
   const chord = hydratePersistedChord(record);
   return {
     id: chord.id,
-    slug: chord.slug,
+    slug: publicSlug ?? chord.slug,
     chordName: chord.chordName,
     root: chord.root,
     recipeId: record.recipeId,
