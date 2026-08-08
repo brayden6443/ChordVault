@@ -28,30 +28,33 @@
       </nav>
 
       <section class="shell library" id="explore">
-        <div class="public-tag-filters">
-          <div class="tag-filter-group">
-            <span class="filter-label">Mood</span>
-            <div class="filters" id="moodFilters" role="group" aria-label="Filter chords by mood"></div>
-          </div>
-          <div class="tag-filter-group">
-            <span class="filter-label">Style</span>
-            <div class="filters" id="styleFilters" role="group" aria-label="Filter chords by style"></div>
-          </div>
-        </div>
-        <section class="filter-settings basic-settings" aria-labelledby="basicSettingsTitle">
-          <h2 class="settings-title" id="basicSettingsTitle">Basic settings</h2>
-          <div class="note-filter-wrap">
-            <span class="filter-label">Note</span>
-            <div class="note-filters" id="noteFilters" role="group" aria-label="Filter chords by root note"></div>
-          </div>
-          <div class="chord-filter-groups basic-filter-groups">
-            <div class="chord-filter-group">
-              <span class="filter-label">Major / Minor</span>
-              <div class="quality-filters filter-tabs" id="qualityFilters" role="group" aria-label="Filter chords by major or minor family"></div>
+        <div class="filter-actions"><button class="reset-filters" id="resetFilters" type="button">Reset filters</button></div>
+        <details class="filter-settings basic-settings settings-panel" open>
+          <summary>Basic settings</summary>
+          <div class="basic-settings-content">
+            <div class="public-tag-filters">
+              <div class="tag-filter-group">
+                <span class="filter-label">Mood</span>
+                <div class="filters" id="moodFilters" role="group" aria-label="Filter chords by mood"></div>
+              </div>
+              <div class="tag-filter-group">
+                <span class="filter-label">Style</span>
+                <div class="filters" id="styleFilters" role="group" aria-label="Filter chords by style"></div>
+              </div>
+            </div>
+            <div class="note-filter-wrap">
+              <span class="filter-label">Root note</span>
+              <div class="note-filters" id="noteFilters" role="group" aria-label="Filter chords by root note"></div>
+            </div>
+            <div class="chord-filter-groups basic-filter-groups">
+              <div class="chord-filter-group">
+                <span class="filter-label">Major / Minor</span>
+                <div class="quality-filters filter-tabs" id="qualityFilters" role="group" aria-label="Filter chords by major or minor family"></div>
+              </div>
             </div>
           </div>
-        </section>
-        <details class="advanced-settings">
+        </details>
+        <details class="advanced-settings settings-panel">
           <summary>Advanced settings</summary>
           <div class="advanced-settings-content">
             <div class="chord-filter-group">
@@ -59,12 +62,12 @@
               <div class="recipe-filters filter-tabs" id="recipeFilters" role="group" aria-label="Filter chords by recipe"></div>
             </div>
             <div class="chord-filter-group">
-              <span class="filter-label">Difficulty</span>
-              <div class="difficulty-filters filter-tabs" id="difficultyFilters" role="group" aria-label="Filter chords by difficulty"></div>
-            </div>
-            <div class="chord-filter-group">
               <span class="filter-label">Chord type</span>
               <div class="type-filters filter-tabs" id="typeFilters" role="group" aria-label="Filter chords by type"></div>
+            </div>
+            <div class="chord-filter-group difficulty-filter-group">
+              <span class="filter-label">Difficulty</span>
+              <div class="difficulty-filters filter-tabs" id="difficultyFilters" role="group" aria-label="Filter chords by difficulty"></div>
             </div>
           </div>
         </details>

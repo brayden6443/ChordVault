@@ -118,7 +118,40 @@ test("review route and every admin endpoint reject unauthenticated requests", as
   const unauthenticated = { authenticate: async () => ({ ok: false as const, status: 401 as const, code: "AUTH_REQUIRED" as const }) };
   assert.equal((await handleRequest(new Request("https://example.test/review.html"), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/audit"), env, unauthenticated)).status, 401);
+  assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/export?format=json"), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/x/reject", { method: "POST" }), env, unauthenticated)).status, 401);
+  await mf.dispose();
+});
+
+test("administrator export includes lossless records and AI enrichment fields in JSON and CSV", async () => {
+  const { mf, db, store } = await database();
+  await store.publish(cRecord); await store.preReview({ ...dRecord, workflowStatus: "pre-reviewed" });
+  const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
+  const jsonResponse = await handleApi(new Request("https://example.test/api/admin/chords/export?format=json"), env, adminDependencies);
+  assert.equal(jsonResponse.status, 200); assert.equal(jsonResponse.headers.get("Cache-Control"), "no-store");
+  assert.match(jsonResponse.headers.get("Content-Disposition") ?? "", /^attachment; filename="chord-vault-export-\d{4}-\d{2}-\d{2}\.json"$/);
+  const json = await jsonResponse.json() as { recordCount: number; records: Array<Record<string, unknown>> };
+  assert.equal(json.recordCount, 2);
+  const exported = json.records.find((record) => record.id === cRecord.id)!;
+  assert.equal(exported.chordName, "C"); assert.equal(exported.recipeId, cRecord.recipeId); assert.equal(exported.workflowStatus, "published");
+  assert.deepEqual(exported.fretPositions, cRecord.fretPositions); assert.deepEqual(exported.tuning, cRecord.tuning);
+  assert.ok(Array.isArray(exported.notes)); assert.ok("description" in exported); assert.ok("tags" in exported); assert.ok("difficulty" in exported);
+
+  const csvResponse = await handleApi(new Request("https://example.test/api/admin/chords/export?format=csv"), env, adminDependencies);
+  assert.equal(csvResponse.status, 200); assert.match(csvResponse.headers.get("Content-Disposition") ?? "", /chord-vault-export-\d{4}-\d{2}-\d{2}\.csv/);
+  const csv = await csvResponse.text();
+  assert.match(csv, /^schemaVersion,id,chordName,slug,root,recipeId,quality,type,tuning,fretPositions/);
+  assert.ok(csv.includes(cRecord.id)); assert.ok(csv.includes(JSON.stringify(cRecord.fretPositions).replaceAll('"', '""'))); assert.ok(csv.includes("recordJson"));
+  await mf.dispose();
+});
+
+test("administrator export handles an empty database", async () => {
+  const { mf, db } = await database(); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
+  const jsonResponse = await handleApi(new Request("https://example.test/api/admin/chords/export?format=json"), env, adminDependencies);
+  const payload = await jsonResponse.json() as { exportedAt: string; recordCount: number; records: unknown[] };
+  assert.match(payload.exportedAt, /^\d{4}-\d{2}-\d{2}T/); assert.equal(payload.recordCount, 0); assert.deepEqual(payload.records, []);
+  const csvResponse = await handleApi(new Request("https://example.test/api/admin/chords/export?format=csv"), env, adminDependencies);
+  const csv = await csvResponse.text(); assert.equal(csv.split("\r\n").length, 1); assert.match(csv, /^schemaVersion,id,chordName/);
   await mf.dispose();
 });
 

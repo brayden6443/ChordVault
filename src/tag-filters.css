@@ -1,7 +1,74 @@
+.filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.reset-filters {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 44px;
+  padding: 0 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+}
+
+.reset-filters:hover {
+  border-color: var(--lime);
+  color: var(--lime);
+}
+
+.settings-panel {
+  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  margin: 0 0 20px;
+}
+
+.settings-panel > summary {
+  align-items: center;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  font-size: 13px;
+  font-weight: 700;
+  justify-content: space-between;
+  letter-spacing: 0.14em;
+  list-style: none;
+  min-height: 58px;
+  text-transform: uppercase;
+}
+
+.settings-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-panel > summary::after {
+  color: var(--lime);
+  content: "+";
+  font-size: 24px;
+  font-weight: 400;
+}
+
+.settings-panel[open] > summary::after {
+  content: "−";
+}
+
+.settings-panel > summary:focus-visible {
+  outline: 3px solid var(--lime);
+  outline-offset: 3px;
+}
+
+.basic-settings-content {
+  padding: 4px 0 28px;
+}
+
 .public-tag-filters {
   display: grid;
   gap: 20px;
-  margin-bottom: 30px;
+  padding-bottom: 26px;
 }
 
 .tag-filter-group {
@@ -11,4 +78,102 @@
 
 .public-tag-filters .filters {
   padding: 0;
+}
+
+.basic-settings .note-filter-wrap {
+  border-top: 1px solid var(--line);
+}
+
+.advanced-settings-content {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.difficulty-filter-group {
+  justify-self: end;
+  min-width: min(100%, 350px);
+}
+
+.difficulty-filters {
+  justify-content: flex-end;
+}
+
+.difficulty-filters .difficulty-filter-button {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  min-width: 52px;
+  padding: 6px 8px;
+}
+
+.difficulty-filter-button > span:first-child {
+  font-size: 10px;
+}
+
+.filter-difficulty-bars {
+  display: flex;
+  gap: 2px;
+}
+
+.filter-difficulty-bars i {
+  background: var(--line);
+  display: block;
+  height: 3px;
+  width: 7px;
+}
+
+.filter-difficulty-bars i.on {
+  background: var(--lime);
+}
+
+.difficulty-filter-button.active .filter-difficulty-bars i {
+  background: rgba(17, 17, 17, 0.28);
+}
+
+.difficulty-filter-button.active .filter-difficulty-bars i.on {
+  background: #111;
+}
+
+@media (max-width: 900px) {
+  .advanced-settings-content {
+    grid-template-columns: 1fr;
+  }
+
+  .difficulty-filter-group {
+    justify-self: stretch;
+  }
+
+  .difficulty-filters {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .filter-actions {
+    margin-bottom: 8px;
+  }
+
+  .reset-filters {
+    width: 100%;
+  }
+
+  .settings-panel > summary {
+    font-size: 12px;
+  }
+
+  .public-tag-filters .filters {
+    padding-bottom: 0;
+  }
+
+  .difficulty-filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .difficulty-filters button {
+    width: 100%;
+  }
+
+  .filter-difficulty-bars {
+    justify-content: center;
+  }
 }

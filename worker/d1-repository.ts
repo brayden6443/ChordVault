@@ -38,6 +38,12 @@ export class D1ChordStore {
     return result.results.map(parseRow);
   }
 
+  async listAll(): Promise<PersistedChordRecordV1[]> {
+    const result = await this.db.prepare("SELECT id, schema_version, record_json FROM chord_voicings ORDER BY workflow_status ASC, updated_at DESC, id ASC").all<ChordRow>();
+    if (!result.success) throw new HostedDataError("DATABASE", "Chord export query failed.");
+    return result.results.map(parseRow);
+  }
+
   async get(id: string): Promise<PersistedChordRecordV1 | null> {
     const row = await this.db.prepare("SELECT id, schema_version, record_json FROM chord_voicings WHERE id = ?1").bind(id).first<ChordRow>();
     return row ? parseRow(row) : null;

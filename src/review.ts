@@ -1,4 +1,3 @@
-import { approvedCsv, approvedJson } from "./chords/export.ts";
 import { APPROVED_C_PROFILE, rankWithCurationProfile } from "./chords/curation.ts";
 import { buildReviewQueue, canApproveVoicing, findVoicingDuplicate } from "./chords/repository.ts";
 import { CANONICAL_VOICINGS } from "./chords/canonical.ts";
@@ -419,8 +418,6 @@ function download(contents: string, filename: string, type: string): void {
 function exclusionSummary(counts: ReturnType<typeof buildReviewQueue>["excluded"]): string {
   return `canonical open ${counts.canonicalOpen}, canonical barre ${counts.canonicalBarre}, exact approved ${counts.exactApproved}, near approved ${counts.nearApproved}, below threshold ${counts.belowQualityThreshold}`;
 }
-byId("exportJson").addEventListener("click", () => download(approvedJson(approvedVault), "chord-vault-approved.json", "application/json"));
-byId("exportCsv").addEventListener("click", () => download(approvedCsv(approvedVault), "chord-vault-approved.csv", "text/csv"));
 
 const libraryGrid = byId("libraryEditorGrid");
 const librarySourceTabs = byId("librarySourceTabs");

@@ -38,8 +38,8 @@
         <div class="toolbar-actions">
           <button class="primary-button" id="generateOne" type="button">Generate chord</button>
           <button class="secondary-button" id="generateBatch" type="button">Generate 12-root batch</button>
-          <button class="secondary-button" id="exportJson" type="button">Export approved JSON</button>
-          <button class="secondary-button" id="exportCsv" type="button">Export approved CSV</button>
+          <a class="secondary-button" href="/api/admin/chords/export?format=json">Export all chord JSON</a>
+          <a class="secondary-button" href="/api/admin/chords/export?format=csv">Export all chord CSV</a>
           <button class="secondary-button" id="backupWorkflow" type="button">Backup workspace</button>
           <button class="secondary-button" id="undoAction" type="button" disabled>Undo last action</button>
         </div>

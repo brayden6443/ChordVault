@@ -1,6 +1,7 @@
 import { authenticateAdmin, type AdminPrincipal, type AuthenticationResult } from "./auth.ts";
 import { D1ChordStore, HostedDataError } from "./d1-repository.ts";
 import { toPublicChordDetails } from "../src/chords/public-chord.ts";
+import { chordExportCsv, chordExportFilename, chordExportJson, createChordExport } from "../src/chords/admin-export.ts";
 import type { WorkerEnv } from "./types.ts";
 
 interface WorkerDependencies { authenticate(request: Request, env: WorkerEnv): Promise<AuthenticationResult> }
@@ -52,6 +53,13 @@ function withPrivateHeaders(response: Response): Response {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+function exportResponse(contents: string, format: "csv" | "json", now: Date): Response {
+  return withPrivateHeaders(new Response(contents, { headers: {
+    "Content-Type": format === "csv" ? "text/csv; charset=utf-8" : "application/json; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${chordExportFilename(format, now)}"`,
+  } }));
+}
+
 export async function handleApi(request: Request, env: WorkerEnv, dependencies: WorkerDependencies = defaultDependencies): Promise<Response> {
   const url = new URL(request.url); const path = url.pathname; const store = new D1ChordStore(env.DB);
   if (!sameOrigin(request, url)) return json({ error: { code: "ORIGIN_DENIED", message: "Cross-origin requests are not allowed." } }, 403);
@@ -74,6 +82,12 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     const principal = await requireAdmin(request, env, dependencies);
     if (principal instanceof Response) return principal;
     if (request.method === "GET" && path === "/api/admin/session") return json({ administrator: { email: principal.email }, expiresAt: principal.expiresAt });
+    if (request.method === "GET" && path === "/api/admin/chords/export") {
+      const format = url.searchParams.get("format");
+      if (format !== "csv" && format !== "json") return json({ error: { code: "INVALID_FORMAT", message: "Export format must be csv or json." } }, 400);
+      const now = new Date(); const bundle = createChordExport(await store.listAll(), now);
+      return exportResponse(format === "csv" ? chordExportCsv(bundle) : chordExportJson(bundle), format, now);
+    }
     if (request.method === "GET" && path === "/api/admin/chords/pre-reviewed") return json({ records: await store.list("pre-reviewed") });
     if (request.method === "GET" && path === "/api/admin/audit") return json({ entries: await store.auditLog() });
     if (request.method === "GET" && path === "/api/admin/quarantine") return json({ records: await store.quarantine() });

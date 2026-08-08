@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { matchesMoodAndStyle } from "../src/chords/filtering.ts";
+import { matchesAnyFilter, matchesMoodAndStyle, toggleFilterValue } from "../src/chords/filtering.ts";
 import { MOOD_TAGS, STYLE_TAGS, normalizedDescriptorTags, normalizedMoodTags, normalizedStyleTags } from "../src/chords/tags.ts";
 
 test("legacy mixed tags split into structural, mood, and style values", () => {
@@ -23,4 +23,13 @@ test("chords without mood or style tags match only unfiltered views", () => {
   assert.equal(matchesMoodAndStyle({}, "All", "All"), true);
   assert.equal(matchesMoodAndStyle({}, "Warm", "All"), false);
   assert.equal(matchesMoodAndStyle({}, "All", "Ambient"), false);
+});
+
+test("multi-select filters toggle independently and All clears the category", () => {
+  const selected = new Set<string>();
+  toggleFilterValue(selected, "Warm"); toggleFilterValue(selected, "Dark");
+  assert.deepEqual([...selected], ["Warm", "Dark"]);
+  assert.equal(matchesAnyFilter(["Bright", "Dark"], selected), true);
+  toggleFilterValue(selected, "Warm"); assert.deepEqual([...selected], ["Dark"]);
+  toggleFilterValue(selected, "All"); assert.equal(selected.size, 0); assert.equal(matchesAnyFilter([], selected), true);
 });
