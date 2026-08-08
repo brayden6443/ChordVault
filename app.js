@@ -4,6 +4,7 @@ import { recipeById, recipeIdFromChordName } from './src/chords/recipes.ts';
 import { displayBarre } from './src/chords/diagram.ts';
 import { legacyChordSlug } from './src/chords/slug.ts';
 import { normalizedDescriptorTags, normalizedMoodTags, REVIEW_TAGS } from './src/chords/tags.ts';
+import { resolveFavoriteIds } from './src/chords/favorites.ts';
 
 const {repository:chordRepository,capabilities:repositoryCapabilities}=await createChordRepository({localStorage,sessionStorage,env:import.meta.env});
 const repositoryWorkspace=chordRepository.loadWorkspace();
@@ -145,7 +146,13 @@ let activeQuality = 'All';
 let activeRecipe = 'All';
 let activeDifficulty = 'All';
 let activeType = 'All';
-let saved = new Set(chordRepository.listFavorites());
+const storedFavorites=chordRepository.listFavorites();
+const resolvedFavorites=resolveFavoriteIds(storedFavorites,chords);
+let saved = new Set(resolvedFavorites);
+if(storedFavorites.some((favorite,index)=>favorite!==resolvedFavorites[index])||storedFavorites.length!==resolvedFavorites.length){
+  storedFavorites.forEach(favorite=>chordRepository.removeFavorite(favorite));
+  resolvedFavorites.forEach(favorite=>chordRepository.addFavorite(favorite));
+}
 let savedOnly = false;
 let pageStart = 0;
 const grid = document.querySelector('#chordGrid');
@@ -245,7 +252,7 @@ function filteredChords(){
     &&(activeRecipe==='All'||c.recipeFamilyKey===activeRecipe)
     &&matchesDifficulty(c)
     &&matchesChordType(c)
-    &&(!savedOnly||saved.has(c.name)));
+    &&(!savedOnly||saved.has(c.id)));
 }
 
 function diagram(chord) {
@@ -270,11 +277,12 @@ function render() {
   const pageSize=12;
   if(pageStart>=shown.length)pageStart=0;
   const visibleChords=shown.slice(pageStart,pageStart+pageSize);
-  grid.innerHTML=visibleChords.map((c)=>{const n=c.vaultIndex; const isSaved=saved.has(c.name); return `<article class="chord-card">
-    <span class="card-number">${String(n).padStart(2,'0')}</span><button class="heart ${isSaved?'is-saved':''}" data-save="${c.name}" aria-label="${isSaved?'Remove':'Add'} ${c.name} ${isSaved?'from':'to'} favorites">${isSaved?'♥':'♡'}</button>
-    <div class="card-title"><div><h3>${c.name}</h3><p>${c.notes}</p></div><button class="play" data-play="${c.name}" aria-label="Play ${c.name}">▶</button></div>
+  grid.classList.toggle('is-incomplete',visibleChords.length<pageSize);
+  grid.innerHTML=visibleChords.map((c)=>{const n=c.vaultIndex; const isSaved=saved.has(c.id); return `<article class="chord-card">
+    <span class="card-number">${String(n).padStart(2,'0')}</span><button class="heart ${isSaved?'is-saved':''}" data-save="${c.id}" aria-label="${isSaved?'Remove':'Add'} ${c.name} ${isSaved?'from':'to'} favorites">${isSaved?'♥':'♡'}</button>
+    <div class="card-title"><div><h3>${c.name}</h3><p>${c.notes}</p></div><button class="play" data-play="${c.id}" aria-label="Play ${c.name}">▶</button></div>
     <a class="chord-name-link" href="/chords/${encodeURIComponent(c.slug)}" aria-label="View ${c.name} chord details">${c.name}</a>
-    ${diagram(c)}<div class="card-footer"><div class="tags">${c.descriptorTags.map(tag=>`<span class="${tag==='Essential'?'essential-badge':''}">${tag}</span>`).join('')}</div><span class="difficulty" aria-label="Difficulty ${c.difficulty} out of 4"><span class="difficulty-label">Difficulty</span>${[1,2,3,4].map(i=>`<i class="${i<=c.difficulty?'on':''}"></i>`).join('')}</span></div>
+    ${diagram(c)}<div class="card-footer"><div class="tags">${c.descriptorTags.map(tag=>`<span class="${tag==='Essential'?'essential-badge':''}">${tag}</span>`).join('')}</div><span class="difficulty" aria-label="Difficulty ${c.difficulty} out of 5"><span class="difficulty-label">Difficulty</span>${[1,2,3,4,5].map(i=>`<i class="${i<=c.difficulty?'on':''}"></i>`).join('')}</span></div>
   </article>`}).join('');
   document.querySelector('#empty').hidden=shown.length>0;
   const pageCount=Math.max(1,Math.ceil(shown.length/pageSize));
@@ -294,7 +302,7 @@ qualityFilters.addEventListener('click',event=>{const button=event.target.closes
 recipeFilters.addEventListener('click',event=>{const button=event.target.closest('[data-recipe]');if(!button)return;activeRecipe=button.dataset.recipe;pageStart=0;recipeFilters.querySelectorAll('[data-recipe]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button)});render()});
 difficultyFilters.addEventListener('click',event=>{const button=event.target.closest('[data-difficulty]');if(!button)return;activeDifficulty=button.dataset.difficulty;pageStart=0;difficultyFilters.querySelectorAll('[data-difficulty]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button)});render()});
 typeFilters.addEventListener('click',event=>{const button=event.target.closest('[data-type]');if(!button)return;activeType=button.dataset.type;pageStart=0;typeFilters.querySelectorAll('[data-type]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button)});render()});
-grid.addEventListener('click',e=>{const s=e.target.closest('[data-save]'); if(s){if(saved.has(s.dataset.save)){saved.delete(s.dataset.save);chordRepository.removeFavorite(s.dataset.save)}else{saved.add(s.dataset.save);chordRepository.addFavorite(s.dataset.save)}render();return} const p=e.target.closest('[data-play]'); if(p) playChord(chords.find(c=>c.name===p.dataset.play),p)});
+grid.addEventListener('click',e=>{const s=e.target.closest('[data-save]'); if(s){if(saved.has(s.dataset.save)){saved.delete(s.dataset.save);chordRepository.removeFavorite(s.dataset.save)}else{saved.add(s.dataset.save);chordRepository.addFavorite(s.dataset.save)}render();return} const p=e.target.closest('[data-play]'); if(p) playChord(chords.find(c=>c.id===p.dataset.play),p)});
 document.querySelector('#savedButton').addEventListener('click',()=>{savedOnly=!savedOnly;pageStart=0;render()});
 function goToPage(page){pageStart=(page-1)*12;render();grid.scrollIntoView({behavior:'smooth',block:'start'})}
 previousPage.addEventListener('click',()=>goToPage(Math.max(1,pageStart/12)));
