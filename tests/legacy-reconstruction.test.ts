@@ -44,7 +44,7 @@ test("missing approval source is rejected", () => {
 
 test("valid library edit is applied", () => {
   const chord = canonical[4]!; const result = reconstructLegacyApproved(backup([chord.id], [publicRecord(chord)], { [chord.id]: { difficulty: 4, descriptorTags: ["Jazz", "Warm"] } }), { expectedPublished: 1, canonicalSource: [chord] });
-  assert.equal(result.report.editsApplied, 1); assert.equal(result.published[0]?.difficulty, 4); assert.deepEqual(result.published[0]?.tags, ["Jazz", "Warm"]);
+  assert.equal(result.report.editsApplied, 1); assert.equal(result.published[0]?.difficulty, 4); assert.deepEqual(result.published[0]?.tags, []); assert.deepEqual(result.published[0]?.moods, ["Warm"]); assert.deepEqual(result.published[0]?.styles, ["Jazz"]);
 });
 
 test("invalid matching library edit is rejected", () => {

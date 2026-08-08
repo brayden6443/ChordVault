@@ -8,6 +8,7 @@
     <link rel="icon" href="data:," />
     <script>document.documentElement.dataset.theme=localStorage.getItem('chord-vault-theme')||'dark'</script>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/src/tag-filters.css" />
     <style>
       :root{--muted:#aaa9a4}.chord-placeholder{min-height:480px}.card-number,.tags span{color:#aaa9a4}html[data-theme="light"] .tags span{color:#4f4f55}@media(max-width:760px){.chord-placeholder{min-height:484px}}
     </style>
@@ -27,20 +28,15 @@
       </nav>
 
       <section class="shell library" id="explore">
-        <div class="filters" role="group" aria-label="Filter chords by mood">
-          <button type="button" class="active" data-mood="All" aria-pressed="true">All</button>
-          <button type="button" data-mood="Bluesy" aria-pressed="false">Bluesy</button>
-          <button type="button" data-mood="Math rock" aria-pressed="false">Math rock</button>
-          <button type="button" data-mood="Ambient" aria-pressed="false">Ambient</button>
-          <button type="button" data-mood="Warm" aria-pressed="false">Warm</button>
-          <button type="button" data-mood="Bright" aria-pressed="false">Bright</button>
-          <button type="button" data-mood="Dark" aria-pressed="false">Dark</button>
-          <button type="button" data-mood="Melancholic" aria-pressed="false">Melancholic</button>
-          <button type="button" data-mood="Tense" aria-pressed="false">Tense</button>
-          <button type="button" data-mood="Jazzy" aria-pressed="false">Jazzy</button>
-          <button type="button" data-mood="Ethereal" aria-pressed="false">Ethereal</button>
-          <button type="button" data-mood="Nostalgic" aria-pressed="false">Nostalgic</button>
-          <button type="button" data-mood="Serious" aria-pressed="false">Serious</button>
+        <div class="public-tag-filters">
+          <div class="tag-filter-group">
+            <span class="filter-label">Mood</span>
+            <div class="filters" id="moodFilters" role="group" aria-label="Filter chords by mood"></div>
+          </div>
+          <div class="tag-filter-group">
+            <span class="filter-label">Style</span>
+            <div class="filters" id="styleFilters" role="group" aria-label="Filter chords by style"></div>
+          </div>
         </div>
         <section class="filter-settings basic-settings" aria-labelledby="basicSettingsTitle">
           <h2 class="settings-title" id="basicSettingsTitle">Basic settings</h2>

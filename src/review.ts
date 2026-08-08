@@ -10,7 +10,7 @@ import { createChordRepository } from "./chords/repository-composition.ts";
 import { CHORD_SCHEMA_VERSION, hydratePersistedChord, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./chords/persisted.ts";
 import { generatorRecipes, recipeById, recipeIdFromChordName } from "./chords/recipes.ts";
 import { STANDARD_TUNING, type ApprovalStatus, type ChordVoicing } from "./chords/types.ts";
-import { normalizedDescriptorTags, REVIEW_TAGS, STRUCTURAL_TAGS } from "./chords/tags.ts";
+import { MOOD_TAGS, STYLE_TAGS, STRUCTURAL_TAGS, normalizedDescriptorTags, normalizedMoodTags, normalizedStyleTags, type MoodTag, type StyleTag } from "./chords/tags.ts";
 
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const RECIPES = generatorRecipes();
@@ -20,28 +20,29 @@ const initialWorkspace = chordRepository.loadWorkspace();
 const savedReviews = initialWorkspace.savedReviews;
 let approvedVault = initialWorkspace.preReviewed;
 let publishedVault = initialWorkspace.published;
-interface LibraryItem { key: string; name: string; root?: string; chordQuality?: string; difficulty: number; descriptorTags: string[]; frets?: number[]; fingers?: string[]; source: "Main Vault" | "Pre-reviewed" | "Unapproved"; }
+interface LibraryItem { key: string; name: string; root?: string; chordQuality?: string; difficulty: number; descriptorTags: string[]; moods: MoodTag[]; styles: StyleTag[]; frets?: number[]; fingers?: string[]; source: "Main Vault" | "Pre-reviewed" | "Unapproved"; }
 const finalApprovedKeys = new Set<string>(initialWorkspace.publishedKeys);
 const fallbackPublicLibrary: LibraryItem[] = CANONICAL_VOICINGS.map((voicing) => ({
   key: voicing.id, name: voicing.chordName, root: voicing.root, chordQuality: voicing.chordQuality, difficulty: voicing.difficulty, source: "Main Vault",
   frets: voicing.fretPositions.map((fret) => fret ?? -1), fingers: (voicing.fingerPositions ?? []).map((finger) => finger ? String(finger) : ""),
   descriptorTags: [voicing.displayPriority === 1 ? "Essential" : "", voicing.category === "Essential Open" ? "Open" : "Barre", voicing.movable ? "Movable" : ""].filter(Boolean),
+  moods: [], styles: [],
 }));
 const publicLibrary: LibraryItem[] = (initialWorkspace.publicLibrary ?? fallbackPublicLibrary)
-  .map((item: LibraryItem) => ({ ...item, source: finalApprovedKeys.has(item.key) ? "Main Vault" : "Unapproved" }));
+  .map((item) => ({ ...item, moods: normalizedMoodTags(item.moods ?? item.descriptorTags), styles: normalizedStyleTags(item.styles ?? item.descriptorTags), descriptorTags: normalizedDescriptorTags(item.descriptorTags), source: finalApprovedKeys.has(item.key) ? "Main Vault" : "Unapproved" }));
 const libraryEdits = initialWorkspace.libraryEdits;
 function migrateLegacyTags(): void {
   const migrateVoicing = (voicing: ChordVoicing) => {
-    const descriptive = normalizedDescriptorTags([...(voicing.descriptorTags ?? []), ...voicing.moodTags, ...voicing.genreTags]);
-    return { ...voicing, moodTags: descriptive.filter((tag) => REVIEW_TAGS.includes(tag)), genreTags: [], descriptorTags: descriptive };
+    const legacy = voicing.descriptorTags ?? [];
+    return { ...voicing, moodTags: normalizedMoodTags([...voicing.moodTags, ...legacy]), genreTags: normalizedStyleTags([...voicing.genreTags, ...legacy]), descriptorTags: normalizedDescriptorTags(legacy) };
   };
   approvedVault = approvedVault.map(migrateVoicing);
   publishedVault = publishedVault.map(migrateVoicing);
   Object.values(savedReviews).forEach((review) => {
-    const descriptive = normalizedDescriptorTags([...(review.descriptorTags ?? []), ...review.moodTags, ...review.genreTags]);
-    review.moodTags = descriptive.filter((tag) => REVIEW_TAGS.includes(tag)); review.genreTags = []; review.descriptorTags = descriptive;
+    const legacy = review.descriptorTags ?? [];
+    review.moodTags = normalizedMoodTags([...review.moodTags, ...legacy]); review.genreTags = normalizedStyleTags([...review.genreTags, ...legacy]); review.descriptorTags = normalizedDescriptorTags(legacy);
   });
-  Object.values(libraryEdits).forEach((edit) => { if (edit.descriptorTags) edit.descriptorTags = normalizedDescriptorTags(edit.descriptorTags); });
+  Object.values(libraryEdits).forEach((edit) => { const legacy = edit.descriptorTags ?? []; edit.moods = normalizedMoodTags(edit.moods ?? legacy); edit.styles = normalizedStyleTags(edit.styles ?? legacy); if (edit.descriptorTags) edit.descriptorTags = normalizedDescriptorTags(edit.descriptorTags); });
   chordRepository.applyLegacyTagMigration(approvedVault, publishedVault, savedReviews, libraryEdits);
 }
 if (repositoryCapabilities.mutations) migrateLegacyTags();
@@ -172,8 +173,8 @@ function render(): void {
   </div>`;
   byId("saveEdit").addEventListener("click", () => {
     voicing.chordName = byId<HTMLInputElement>("editName").value.trim() || voicing.chordName;
-    voicing.moodTags = splitTags(byId<HTMLInputElement>("editMood").value);
-    voicing.genreTags = splitTags(byId<HTMLInputElement>("editGenre").value);
+    voicing.moodTags = normalizedMoodTags(splitTags(byId<HTMLInputElement>("editMood").value));
+    voicing.genreTags = normalizedStyleTags(splitTags(byId<HTMLInputElement>("editGenre").value));
     voicing.difficulty = Number(byId<HTMLSelectElement>("editDifficulty").value) as 1 | 2 | 3 | 4 | 5;
     voicing.description = byId<HTMLTextAreaElement>("editDescription").value.trim();
     saveCurrent(voicing); render();
@@ -272,13 +273,16 @@ function normalizeImportedVoicing(raw: Record<string, unknown>, index: number): 
   const fingers = Array.isArray(raw.fingerPositions) ? raw.fingerPositions : String(raw.fingerPositions ?? "").split(" ");
   const fingerPositions = fretPositions.map((fret, stringIndex) => fret && Number(fingers[stringIndex]) ? Number(fingers[stringIndex]) : null);
   const shapeKey = `${STANDARD_TUNING.id}|${root}|${chordQuality}|${fretPositions.map((fret) => fret ?? "x").join("-")}`;
-  const descriptorTags = normalizedDescriptorTags([...importedArray(raw.descriptorTags), ...importedArray(raw.moodTags), ...importedArray(raw.genreTags)]);
+  const legacyTags = importedArray(raw.descriptorTags);
+  const descriptorTags = normalizedDescriptorTags(legacyTags);
+  const moods = normalizedMoodTags([...importedArray(raw.moods), ...importedArray(raw.moodTags), ...legacyTags]);
+  const styles = normalizedStyleTags([...importedArray(raw.styles), ...importedArray(raw.genreTags), ...legacyTags]);
   const persisted: PersistedChordRecordV1 = {
     schemaVersion: CHORD_SCHEMA_VERSION, id: String(raw.id || `imported_${importHash(shapeKey)}`), root,
     recipeId: recipe.id as PersistedChordRecordV1["recipeId"], tuning: STANDARD_TUNING, fretPositions, fingerPositions,
     displayNameOverride: chordName === `${root}${recipe.suffix}` ? undefined : chordName,
     description: String(raw.description ?? ""), difficulty: Math.max(1, Math.min(5, Number(raw.difficulty) || 3)) as 1 | 2 | 3 | 4 | 5,
-    tags: descriptorTags, workflowStatus: "pre-reviewed", provenance: { source: "Imported file" },
+    tags: descriptorTags, moods, styles, workflowStatus: "pre-reviewed", provenance: { source: "Imported file" },
   };
   const validated = validatePersistedChord(persisted);
   if (!validated.ok) throw new Error(`Row ${index + 1}: ${validated.issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
@@ -428,7 +432,7 @@ function approvedLibraryItems(): LibraryItem[] {
   return approvedVault.map((voicing) => ({
     key: voicing.id, name: voicing.chordName, difficulty: voicing.difficulty, source: "Pre-reviewed",
     frets: voicing.fretPositions.map((fret) => fret ?? -1), fingers: (voicing.fingerPositions ?? []).map((finger) => finger ? String(finger) : ""),
-    descriptorTags: normalizedDescriptorTags(voicing.descriptorTags ?? [...new Set([...voicing.moodTags, ...voicing.genreTags])]),
+    descriptorTags: normalizedDescriptorTags(voicing.descriptorTags ?? []), moods: normalizedMoodTags(voicing.moodTags), styles: normalizedStyleTags(voicing.genreTags),
   }));
 }
 
@@ -446,20 +450,22 @@ function allLibraryItems(): LibraryItem[] {
 
 function editedLibraryItem(item: LibraryItem): LibraryItem {
   const edit = libraryEdits[item.key];
-  return { ...item, difficulty: edit?.difficulty ?? item.difficulty, descriptorTags: normalizedDescriptorTags(edit?.descriptorTags ?? item.descriptorTags) };
+  return { ...item, difficulty: edit?.difficulty ?? item.difficulty, descriptorTags: normalizedDescriptorTags(edit?.descriptorTags ?? item.descriptorTags), moods: normalizedMoodTags(edit?.moods ?? item.moods), styles: normalizedStyleTags(edit?.styles ?? item.styles) };
 }
 
 function tagVocabulary(): string[] {
-  return [...STRUCTURAL_TAGS, ...REVIEW_TAGS];
+  return [...STRUCTURAL_TAGS, ...MOOD_TAGS, ...STYLE_TAGS];
 }
 
-function persistLibraryEdit(item: LibraryItem, update: { difficulty?: number; descriptorTags?: string[] }): void {
+function persistLibraryEdit(item: LibraryItem, update: { difficulty?: number; descriptorTags?: string[]; moods?: MoodTag[]; styles?: StyleTag[] }): void {
   libraryEdits[item.key] = { ...libraryEdits[item.key], ...update };
   chordRepository.updateEditorialFields(item.key, update);
   const approved = approvedVault.find((voicing) => voicing.id === item.key);
   if (approved) {
     if (update.difficulty !== undefined) approved.difficulty = update.difficulty as 1 | 2 | 3 | 4 | 5;
     if (update.descriptorTags) approved.descriptorTags = update.descriptorTags;
+    if (update.moods) approved.moodTags = update.moods;
+    if (update.styles) approved.genreTags = update.styles;
   }
 }
 
@@ -475,13 +481,15 @@ async function saveLibraryEdit(item: LibraryItem, card: HTMLElement): Promise<vo
       const response = await fetch(`/api/admin/chords/${encodeURIComponent(item.key)}/edit`, {
         method: "POST",
         headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ difficulty: edited.difficulty, tags: edited.descriptorTags }),
+        body: JSON.stringify({ difficulty: edited.difficulty, tags: edited.descriptorTags, moods: edited.moods, styles: edited.styles }),
       });
       if (!response.ok) throw new Error(`Save failed with status ${response.status}`);
       const published = publishedVault.find((voicing) => voicing.id === item.key);
       if (published) {
         published.difficulty = edited.difficulty as 1 | 2 | 3 | 4 | 5;
         published.descriptorTags = [...edited.descriptorTags];
+        published.moodTags = [...edited.moods];
+        published.genreTags = [...edited.styles];
       }
       status.textContent = "Saved to Main Vault";
     } else {
@@ -523,7 +531,7 @@ function libraryItemVoicing(item: LibraryItem): ChordVoicing {
     notes: pitches.map((pitch) => pitch.note), intervals: intervalsRelativeToRoot(pitches, root), bassNote: bass?.note ?? "",
     inversion: inversionForPitches(pitches, root), alternateNames: [], fretSpan: fretSpanFor(frets),
     openStringCount: frets.filter((fret) => fret === 0).length, difficulty: item.difficulty as 1 | 2 | 3 | 4 | 5,
-    moodTags: [], genreTags: [], descriptorTags: item.descriptorTags, description: "", qualityScore: 0,
+    moodTags: item.moods, genreTags: item.styles, descriptorTags: item.descriptorTags, description: "", qualityScore: 0,
     scoreBreakdown: emptyScore, approvalStatus: "approved", possibleBarres: [],
   };
 }
@@ -536,7 +544,7 @@ function mainVaultVoicings(): ChordVoicing[] {
 
 function duplicateCard(label: string, voicing: ChordVoicing): string {
   const item: LibraryItem = { key: voicing.id, name: voicing.chordName, root: voicing.root, chordQuality: voicing.chordQuality,
-    difficulty: voicing.difficulty, descriptorTags: voicing.descriptorTags ?? [...voicing.moodTags, ...voicing.genreTags],
+    difficulty: voicing.difficulty, descriptorTags: voicing.descriptorTags ?? [], moods: voicing.moodTags, styles: voicing.genreTags,
     frets: voicing.fretPositions.map((fret) => fret ?? -1), fingers: (voicing.fingerPositions ?? []).map((finger) => finger ? String(finger) : ""), source: "Main Vault" };
   return `<article class="duplicate-card"><span>${label}</span><h3>${escapeHtml(voicing.chordName)}</h3>${libraryDiagram(item)}
     <dl><div><dt>Frets</dt><dd>${voicing.fretPositions.map((fret) => fret ?? "x").join(" · ")}</dd></div><div><dt>Notes</dt><dd>${voicing.notes.join(" · ")}</dd></div><div><dt>Inversion</dt><dd>${escapeHtml(voicing.inversion)}</dd></div><div><dt>Difficulty</dt><dd>${voicing.difficulty} / 5</dd></div></dl></article>`;
@@ -563,10 +571,12 @@ byId("keepExisting").addEventListener("click", closeDuplicateDialog);
 byId("publishDuplicate").addEventListener("click", () => { const publish = pendingDuplicatePublish; pendingDuplicatePublish = null; duplicateDialog.close(); publish?.(); });
 byId("mergeDuplicate").addEventListener("click", () => {
   const pair = pendingDuplicatePair; if (!pair) return;
-  const mergedTags = [...new Set([...(pair.match.descriptorTags ?? []), ...(pair.candidate.descriptorTags ?? []), ...pair.candidate.moodTags, ...pair.candidate.genreTags])];
+  const mergedTags = [...new Set([...(pair.match.descriptorTags ?? []), ...(pair.candidate.descriptorTags ?? [])])];
+  const mergedMoods = [...new Set([...pair.match.moodTags, ...pair.candidate.moodTags])];
+  const mergedStyles = [...new Set([...pair.match.genreTags, ...pair.candidate.genreTags])];
   const published = publishedVault.find((item) => item.id === pair.match.id);
-  if (published) { published.descriptorTags = mergedTags; published.description ||= pair.candidate.description; }
-  else libraryEdits[pair.match.id] = { ...libraryEdits[pair.match.id], descriptorTags: mergedTags };
+  if (published) { published.descriptorTags = mergedTags; published.moodTags = mergedMoods; published.genreTags = mergedStyles; published.description ||= pair.candidate.description; }
+  else libraryEdits[pair.match.id] = { ...libraryEdits[pair.match.id], descriptorTags: mergedTags, moods: mergedMoods, styles: mergedStyles };
   chordRepository.mergeVoicings(pair.match.id, pair.candidate);
   audit("Merged duplicate metadata", pair.candidate.chordName); closeDuplicateDialog(); renderLibraryEditor();
 });
@@ -585,17 +595,19 @@ function renderLibraryEditor(): void {
   const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
   if (libraryPage >= pageCount) libraryPage = pageCount - 1;
   const visible = items.slice(libraryPage * pageSize, libraryPage * pageSize + pageSize).map(editedLibraryItem);
-  const vocabulary = tagVocabulary();
   libraryGrid.innerHTML = visible.length ? visible.map((item) => {
     const encodedKey = encodeURIComponent(item.key);
-    const addable = vocabulary.filter((tag) => !item.descriptorTags.includes(tag));
+    const tagEditor = (label: string, kind: "descriptorTags" | "moods" | "styles", values: readonly string[], vocabulary: readonly string[]) => {
+      const addable = vocabulary.filter((tag) => !values.includes(tag));
+      return `<div class="editable-tag-group"><span class="editable-tag-label">${label}</span><div class="editable-tags">${values.map((tag) => `<button class="editable-tag" type="button" data-tag-kind="${kind}" data-remove-tag="${encodeURIComponent(tag)}" aria-label="Remove ${escapeHtml(tag)}"><span>${escapeHtml(tag)}</span><b>×</b></button>`).join("")}
+      <button class="add-tag-button" data-tag-kind="${kind}" type="button" aria-label="Add ${label.toLowerCase()} tag to ${escapeHtml(item.name)}">+</button>
+      <select class="tag-picker" data-tag-kind="${kind}" aria-label="Choose ${label.toLowerCase()} tag" hidden><option value="">Choose tag</option>${addable.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("")}</select></div></div>`;
+    };
     return `<article class="library-edit-card" data-library-key="${encodedKey}" data-library-source="${item.source}">
       <div class="library-edit-card-header"><div><label class="library-select"><input type="checkbox" class="library-select-box"${selectedLibraryKeys.has(item.key) ? " checked" : ""}/> Select</label><span class="library-source-label">${item.source}</span><h3>${escapeHtml(item.name)}</h3></div>
       <select class="library-difficulty" aria-label="Difficulty for ${escapeHtml(item.name)}">${[1,2,3,4,5].map((level) => `<option value="${level}"${level === item.difficulty ? " selected" : ""}>${level} / 5</option>`).join("")}</select></div>
       ${libraryDiagram(item)}
-      <div class="editable-tags">${item.descriptorTags.map((tag) => `<button class="editable-tag" type="button" data-remove-tag="${encodeURIComponent(tag)}" aria-label="Remove ${escapeHtml(tag)}"><span>${escapeHtml(tag)}</span><b>×</b></button>`).join("")}
-      <button class="add-tag-button" type="button" aria-label="Add descriptor to ${escapeHtml(item.name)}">+</button>
-      <select class="tag-picker" aria-label="Choose descriptor" hidden><option value="">Choose tag</option>${addable.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("")}</select></div>
+      <div class="editable-tag-groups">${tagEditor("Chord type", "descriptorTags", item.descriptorTags, STRUCTURAL_TAGS)}${tagEditor("Mood", "moods", item.moods, MOOD_TAGS)}${tagEditor("Style", "styles", item.styles, STYLE_TAGS)}</div>
       <div class="library-card-actions"><button class="library-play-button" type="button" aria-label="Play ${escapeHtml(item.name)} chord">Play chord</button><button class="library-save-button" type="button">Save changes</button></div>
       <span class="library-save-status" role="status" aria-live="polite"></span>
       ${item.source === "Pre-reviewed" || item.source === "Unapproved" ? `<button class="final-approve-button" type="button">Final approve <span>+</span></button>` : `<span class="published-label">Already in Main Vault</span>`}
@@ -622,10 +634,13 @@ libraryGrid.addEventListener("change", (event) => {
   if (target.classList.contains("library-difficulty")) persistLibraryEdit(item, { difficulty: Number(target.value) });
   if (target.classList.contains("tag-picker") && target.value) {
     const edited = editedLibraryItem(item);
-    persistLibraryEdit(item, { descriptorTags: [...new Set([...edited.descriptorTags, target.value])] });
+    const kind = target.dataset.tagKind;
+    if (kind === "moods") persistLibraryEdit(item, { moods: normalizedMoodTags([...edited.moods, target.value]) });
+    else if (kind === "styles") persistLibraryEdit(item, { styles: normalizedStyleTags([...edited.styles, target.value]) });
+    else persistLibraryEdit(item, { descriptorTags: normalizedDescriptorTags([...edited.descriptorTags, target.value]) });
     renderLibraryEditor();
     const updatedCard = [...libraryGrid.querySelectorAll<HTMLElement>("[data-library-key]")].find((candidate) => decodeURIComponent(candidate.dataset.libraryKey ?? "") === item.key);
-    const updatedPicker = updatedCard?.querySelector<HTMLSelectElement>(".tag-picker");
+    const updatedPicker = updatedCard?.querySelector<HTMLSelectElement>(`.tag-picker[data-tag-kind="${kind}"]`);
     if (updatedPicker) { updatedPicker.hidden = false; updatedPicker.focus(); }
   }
 });
@@ -638,7 +653,7 @@ libraryGrid.addEventListener("click", (event) => {
   const item = itemForCard(card);
   if (!item) return;
   if (button.classList.contains("add-tag-button")) {
-    const picker = card.querySelector<HTMLSelectElement>(".tag-picker")!;
+    const picker = card.querySelector<HTMLSelectElement>(`.tag-picker[data-tag-kind="${button.dataset.tagKind}"]`)!;
     picker.hidden = !picker.hidden;
     if (!picker.hidden) picker.focus();
   }
@@ -652,7 +667,10 @@ libraryGrid.addEventListener("click", (event) => {
   }
   if (button.dataset.removeTag) {
     const remove = decodeURIComponent(button.dataset.removeTag);
-    persistLibraryEdit(item, { descriptorTags: editedLibraryItem(item).descriptorTags.filter((tag) => tag !== remove) });
+    const edited = editedLibraryItem(item);
+    if (button.dataset.tagKind === "moods") persistLibraryEdit(item, { moods: edited.moods.filter((tag) => tag !== remove) });
+    else if (button.dataset.tagKind === "styles") persistLibraryEdit(item, { styles: edited.styles.filter((tag) => tag !== remove) });
+    else persistLibraryEdit(item, { descriptorTags: edited.descriptorTags.filter((tag) => tag !== remove) });
     renderLibraryEditor();
   }
   if (button.classList.contains("final-approve-button")) {
@@ -673,6 +691,8 @@ libraryGrid.addEventListener("click", (event) => {
     const edited = editedLibraryItem(item);
     voicing.difficulty = edited.difficulty as 1 | 2 | 3 | 4 | 5;
     voicing.descriptorTags = edited.descriptorTags;
+    voicing.moodTags = edited.moods;
+    voicing.genreTags = edited.styles;
     requestPublish(voicing, () => {
       voicing.approvalStatus = "approved";
       publishedVault = [...publishedVault.filter((published) => published.id !== voicing.id), voicing];
@@ -713,7 +733,7 @@ const bulkTag = byId<HTMLSelectElement>("bulkTag");
 bulkTag.innerHTML += tagVocabulary().map((tag) => `<option>${escapeHtml(tag)}</option>`).join("");
 byId<HTMLInputElement>("selectVisible").addEventListener("change", (event) => { const checked = (event.target as HTMLInputElement).checked; libraryGrid.querySelectorAll<HTMLInputElement>(".library-select-box").forEach((box) => { box.checked = checked; const card = box.closest<HTMLElement>("[data-library-key]"); if (!card) return; const key = decodeURIComponent(card.dataset.libraryKey!); if (checked) selectedLibraryKeys.add(key); else selectedLibraryKeys.delete(key); }); });
 byId<HTMLSelectElement>("bulkDifficulty").addEventListener("change", (event) => { const level = Number((event.target as HTMLSelectElement).value); if (!level) return; [...publicLibrary, ...approvedLibraryItems()].filter((item) => selectedLibraryKeys.has(item.key)).forEach((item) => persistLibraryEdit(item, { difficulty: level })); audit("Bulk difficulty edit", `${selectedLibraryKeys.size} chords`); renderLibraryEditor(); });
-bulkTag.addEventListener("change", () => { if (!bulkTag.value) return; [...publicLibrary, ...approvedLibraryItems()].filter((item) => selectedLibraryKeys.has(item.key)).forEach((item) => persistLibraryEdit(item, { descriptorTags: [...new Set([...editedLibraryItem(item).descriptorTags, bulkTag.value])] })); audit("Bulk tag added", `${bulkTag.value} to ${selectedLibraryKeys.size} chords`); renderLibraryEditor(); });
+bulkTag.addEventListener("change", () => { if (!bulkTag.value) return; [...publicLibrary, ...approvedLibraryItems()].filter((item) => selectedLibraryKeys.has(item.key)).forEach((item) => { const edited = editedLibraryItem(item); if (normalizedMoodTags([bulkTag.value]).length) persistLibraryEdit(item, { moods: normalizedMoodTags([...edited.moods, bulkTag.value]) }); else if (normalizedStyleTags([bulkTag.value]).length) persistLibraryEdit(item, { styles: normalizedStyleTags([...edited.styles, bulkTag.value]) }); else persistLibraryEdit(item, { descriptorTags: normalizedDescriptorTags([...edited.descriptorTags, bulkTag.value]) }); }); audit("Bulk tag added", `${bulkTag.value} to ${selectedLibraryKeys.size} chords`); renderLibraryEditor(); });
 byId("bulkLater").addEventListener("click", () => { selectedLibraryKeys.forEach((key) => reviewLater.add(key)); chordRepository.markReviewLater([...selectedLibraryKeys]); audit("Bulk saved for later", `${selectedLibraryKeys.size} chords`); renderLibraryEditor(); });
 byId("bulkApprove").addEventListener("click", () => { const first = libraryGrid.querySelector<HTMLButtonElement>("[data-library-key] .library-select-box:checked")?.closest<HTMLElement>("[data-library-key]")?.querySelector<HTMLButtonElement>(".final-approve-button"); if (first) { batchStatus.textContent = "Approving selected chords one at a time so duplicate checks are preserved."; first.click(); } });
 

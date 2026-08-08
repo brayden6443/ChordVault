@@ -33,6 +33,8 @@ export interface ScoreBreakdown {
   duplicateNotePenalty: number;
 }
 
+import type { MoodTag, StyleTag } from "./tags.ts";
+
 export interface ChordVoicing {
   id: string;
   slug: string;
@@ -50,8 +52,8 @@ export interface ChordVoicing {
   fretSpan: number;
   openStringCount: number;
   difficulty: 1 | 2 | 3 | 4 | 5;
-  moodTags: string[];
-  genreTags: string[];
+  moodTags: MoodTag[];
+  genreTags: StyleTag[];
   descriptorTags?: string[];
   description: string;
   qualityScore: number;

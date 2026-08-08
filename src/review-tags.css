@@ -1,0 +1,21 @@
+.editable-tag-groups {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.editable-tag-group {
+  display: grid;
+  gap: 6px;
+}
+
+.editable-tag-label {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.editable-tag-group .editable-tags {
+  margin-top: 0;
+}

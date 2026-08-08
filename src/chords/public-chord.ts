@@ -1,5 +1,5 @@
 import { hydratePersistedChord, type PersistedChordRecordV1 } from "./persisted.ts";
-import { normalizedDescriptorTags } from "./tags.ts";
+import { normalizedDescriptorTags, normalizedMoodTags, normalizedStyleTags, type MoodTag, type StyleTag } from "./tags.ts";
 
 export interface PublicChordDetails {
   id: string;
@@ -16,6 +16,8 @@ export interface PublicChordDetails {
   inversion: string;
   difficulty: number;
   tags: string[];
+  moods: MoodTag[];
+  styles: StyleTag[];
   description: string;
   possibleBarres: Array<{ fret: number; fromString: number; toString: number }>;
 }
@@ -37,6 +39,8 @@ export function toPublicChordDetails(record: PersistedChordRecordV1, publicSlug?
     inversion: chord.inversion,
     difficulty: chord.difficulty,
     tags: normalizedDescriptorTags(chord.descriptorTags ?? []),
+    moods: normalizedMoodTags(chord.moodTags),
+    styles: normalizedStyleTags(chord.genreTags),
     description: chord.description,
     possibleBarres: chord.possibleBarres.map((barre) => ({ ...barre })),
   };

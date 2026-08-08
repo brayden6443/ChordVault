@@ -12,6 +12,24 @@ test("validates a versioned persisted chord", () => {
   assert.equal(validatePersistedChord(valid).ok, true);
 });
 
+test("persists and hydrates multiple moods and styles", () => {
+  const record = { ...valid, moods: ["Dreamy", "Warm"], styles: ["Jazz", "Neo Soul"] };
+  const result = validatePersistedChord(record);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const chord = hydratePersistedChord(result.value);
+  assert.deepEqual(chord.moodTags, ["Dreamy", "Warm"]);
+  assert.deepEqual(chord.genreTags, ["Jazz", "Neo Soul"]);
+});
+
+test("existing records without mood or style fields receive safe defaults", () => {
+  const result = validatePersistedChord({ ...valid, tags: ["Essential"] });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.moods, []);
+  assert.deepEqual(result.value.styles, []);
+});
+
 test("rejects malformed positions, tuning, recipe, difficulty, and workflow status", () => {
   const cases: unknown[] = [
     { ...valid, fretPositions: [0, 1] },

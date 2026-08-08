@@ -2,6 +2,7 @@ import { analyzePlayability } from "./playability.ts";
 import { recipeById, requireRecipe, type RecipeId } from "./recipes.ts";
 import { scoreVoicing } from "./scoring.ts";
 import { semanticChordSlug } from "./slug.ts";
+import { normalizedDescriptorTags, normalizedMoodTags, normalizedStyleTags, splitLegacyTags, type MoodTag, type StyleTag } from "./tags.ts";
 import { bassPitch, intervalsRelativeToRoot, inversionForPitches, pitchClassFromName, pitchClassName, pitchesForVoicing, reliableAlternateChordNames } from "./theory.ts";
 import type { ChordVoicing, ShapeFamily, Tuning, VoicingCategory } from "./types.ts";
 
@@ -33,6 +34,8 @@ export interface PersistedChordRecordV1 {
   description: string;
   difficulty: 1 | 2 | 3 | 4 | 5;
   tags: string[];
+  moods?: MoodTag[];
+  styles?: StyleTag[];
   workflowStatus: PersistedWorkflowStatus;
   catalog?: PersistedCatalogMetadata;
   provenance: { source: string };
@@ -89,6 +92,8 @@ export function validatePersistedChord(value: unknown): ValidationResult<Persist
   if (typeof value.description !== "string") issues.push({ path: "description", message: "must be a string" });
   if (!Number.isInteger(value.difficulty) || Number(value.difficulty) < DIFFICULTY_MIN || Number(value.difficulty) > DIFFICULTY_MAX) issues.push({ path: "difficulty", message: "must be an integer from 1 to 5" });
   if (!Array.isArray(value.tags) || value.tags.some((tag) => typeof tag !== "string" || tag.trim() === "")) issues.push({ path: "tags", message: "must be an array of non-empty strings" });
+  if (value.moods !== undefined && (!Array.isArray(value.moods) || value.moods.some((tag) => typeof tag !== "string" || !normalizedMoodTags([tag]).length))) issues.push({ path: "moods", message: "must contain only supported mood tags" });
+  if (value.styles !== undefined && (!Array.isArray(value.styles) || value.styles.some((tag) => typeof tag !== "string" || !normalizedStyleTags([tag]).length))) issues.push({ path: "styles", message: "must contain only supported style tags" });
   if (typeof value.workflowStatus !== "string" || !WORKFLOW_STATUSES.has(value.workflowStatus as PersistedWorkflowStatus)) issues.push({ path: "workflowStatus", message: "must be pending, pre-reviewed, published, or rejected" });
   if (!isObject(value.provenance)) issues.push({ path: "provenance", message: "must be an object" });
   else validateString(value.provenance.source, "provenance.source", issues);
@@ -109,7 +114,13 @@ export function validatePersistedChord(value: unknown): ValidationResult<Persist
   }
   if (issues.length) return { ok: false, issues };
   const record = value as unknown as PersistedChordRecordV1;
-  return { ok: true, value: { ...record, tags: [...new Set(record.tags.map((tag) => tag.trim()))] }, issues: [] };
+  const legacy = splitLegacyTags(record.tags);
+  return { ok: true, value: {
+    ...record,
+    tags: normalizedDescriptorTags(record.tags),
+    moods: record.moods === undefined ? legacy.moods : normalizedMoodTags(record.moods),
+    styles: record.styles === undefined ? legacy.styles : normalizedStyleTags(record.styles),
+  }, issues: [] };
 }
 
 export function safeParseJson(text: string): ValidationResult<unknown> {
@@ -131,7 +142,7 @@ export function hydratePersistedChord(record: PersistedChordRecordV1): ChordVoic
     fretPositions: [...value.fretPositions], fingerPositions: value.fingerPositions ? [...value.fingerPositions] : undefined,
     notes: pitches.map((pitch) => pitch.note), intervals, bassNote: bass?.note ?? "", inversion: inversionForPitches(pitches, root),
     alternateNames: reliableAlternateChordNames(root, intervals, chordName), fretSpan: analysis.fretSpan,
-    openStringCount: analysis.openStringCount, difficulty: value.difficulty, moodTags: [...value.tags], genreTags: [], descriptorTags: [...value.tags],
+    openStringCount: analysis.openStringCount, difficulty: value.difficulty, moodTags: [...(value.moods ?? [])], genreTags: [...(value.styles ?? [])], descriptorTags: [...value.tags],
     description: value.description, qualityScore: scored.score, scoreBreakdown: scored.breakdown,
     approvalStatus: value.workflowStatus === "pending" ? "pending" : value.workflowStatus === "rejected" ? "rejected" : "approved",
     possibleBarres: analysis.possibleBarres, shapeFamily: catalog?.shapeFamily, category: catalog?.category, source: value.provenance.source,
@@ -150,7 +161,10 @@ export function persistChordVoicing(voicing: ChordVoicing, workflowStatus?: Pers
     tuning: { ...voicing.tuning, strings: voicing.tuning.strings.map((string) => ({ ...string })) }, fretPositions: [...voicing.fretPositions],
     fingerPositions: voicing.fingerPositions ? [...voicing.fingerPositions] : undefined,
     displayNameOverride: voicing.chordName !== defaultName ? voicing.chordName : undefined, description: voicing.description,
-    difficulty: voicing.difficulty, tags: [...new Set(voicing.descriptorTags ?? [...voicing.moodTags, ...voicing.genreTags])],
+    difficulty: voicing.difficulty,
+    tags: normalizedDescriptorTags(voicing.descriptorTags ?? []),
+    moods: normalizedMoodTags([...(voicing.moodTags ?? []), ...(voicing.descriptorTags ?? [])]),
+    styles: normalizedStyleTags([...(voicing.genreTags ?? []), ...(voicing.descriptorTags ?? [])]),
     workflowStatus: workflowStatus ?? inferredStatus,
     catalog: voicing.isCanonical || voicing.isEssential || voicing.category ? { canonical: Boolean(voicing.isCanonical), essential: Boolean(voicing.isEssential), category: voicing.category, displayPriority: voicing.displayPriority, shapeFamily: voicing.shapeFamily, movable: voicing.movable, baseShapeRoot: voicing.baseShapeRoot, applicableRoots: voicing.applicableRoots } : undefined,
     provenance: { source: voicing.source ?? "Chord Vault" },

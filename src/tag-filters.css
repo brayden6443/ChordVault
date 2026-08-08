@@ -1,0 +1,14 @@
+.public-tag-filters {
+  display: grid;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.tag-filter-group {
+  display: grid;
+  gap: 10px;
+}
+
+.public-tag-filters .filters {
+  padding: 0;
+}

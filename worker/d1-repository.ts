@@ -125,7 +125,7 @@ export class D1ChordStore {
 
   async merge(targetId: string, value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
     const target = await this.get(targetId); if (!target) throw new HostedDataError("NOT_FOUND", "Merge target not found.");
-    const source = this.validated(value, target.workflowStatus); const merged = { ...target, description: target.description || source.description, tags: [...new Set([...target.tags, ...source.tags])] };
+    const source = this.validated(value, target.workflowStatus); const merged = { ...target, description: target.description || source.description, tags: [...new Set([...target.tags, ...source.tags])], moods: [...new Set([...(target.moods ?? []), ...(source.moods ?? [])])], styles: [...new Set([...(target.styles ?? []), ...(source.styles ?? [])])] };
     await this.atomic([this.upsert(merged), ...this.tagStatements(merged), this.audit(targetId, "Merged chord metadata", actor, { sourceId: source.id })]); return merged;
   }
 
@@ -137,6 +137,8 @@ export class D1ChordStore {
       ...(Object.hasOwn(changes, "description") ? { description: changes.description } : {}),
       ...(Object.hasOwn(changes, "difficulty") ? { difficulty: changes.difficulty } : {}),
       ...(Object.hasOwn(changes, "tags") ? { tags: changes.tags } : {}),
+      ...(Object.hasOwn(changes, "moods") ? { moods: changes.moods } : {}),
+      ...(Object.hasOwn(changes, "styles") ? { styles: changes.styles } : {}),
       ...(Object.hasOwn(changes, "displayNameOverride") ? { displayNameOverride: changes.displayNameOverride } : {}),
       ...(Object.hasOwn(changes, "fingerPositions") ? { fingerPositions: changes.fingerPositions } : {}),
       ...(Object.hasOwn(changes, "catalog") ? { catalog: changes.catalog } : {}),

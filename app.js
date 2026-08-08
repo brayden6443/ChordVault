@@ -3,7 +3,8 @@ import { createChordRepository } from './src/chords/repository-composition.ts';
 import { recipeById, recipeIdFromChordName } from './src/chords/recipes.ts';
 import { displayBarre } from './src/chords/diagram.ts';
 import { legacyChordSlug } from './src/chords/slug.ts';
-import { normalizedDescriptorTags, normalizedMoodTags, REVIEW_TAGS } from './src/chords/tags.ts';
+import { matchesMoodAndStyle } from './src/chords/filtering.ts';
+import { MOOD_TAGS, STYLE_TAGS, normalizedDescriptorTags, normalizedMoodTags, normalizedStyleTags } from './src/chords/tags.ts';
 import { resolveFavoriteIds } from './src/chords/favorites.ts';
 
 const {repository:chordRepository,capabilities:repositoryCapabilities}=await createChordRepository({localStorage,sessionStorage,env:import.meta.env});
@@ -96,7 +97,7 @@ const canonicalBase=CANONICAL_VOICINGS.map(voicing=>({
   id:voicing.id,
   name:voicing.chordName,
   notes:voicing.fretPositions.map((fret,index)=>fret===null?'×':voicing.notes[voicing.fretPositions.slice(0,index+1).filter(value=>value!==null).length-1]).join(' · '),
-  moods:[],style:voicing.shapeFamily,difficulty:voicing.difficulty,
+  moods:[],styles:[],difficulty:voicing.difficulty,
   frets:voicing.fretPositions.map(fret=>fret??-1),
   fingers:inferredFingers(voicing.fretPositions.map(fret=>fret??-1),voicing.fingerPositions??[]),
   tones:voicing.fretPositions.flatMap((fret,index)=>fret===null?[]:[440*2**((voicing.tuning.strings[index].midi+fret-69)/12)]),
@@ -109,16 +110,14 @@ const canonicalChords=canonicalBase.map(chord=>{
   return curated?{...chord,...curated,chordQuality:chord.chordQuality,root:chord.root,isEssential:true,isCanonical:true,category:chord.category,displayPriority:chord.displayPriority,movable:chord.movable,shapeFamily:chord.shapeFamily}:chord;
 });
 const canonicalKeys=new Set(canonicalChords.map(chord=>`${chord.name}|${chord.frets.join('-')}`));
-const MOOD_TAGS=new Set(REVIEW_TAGS);
-const normalizedDisplayTags=normalizedDescriptorTags;
 const publishedVoicings=repositoryWorkspace.published.map(voicing=>{
-  const descriptorTags=normalizedDisplayTags([...(voicing.descriptorTags??[]),...(voicing.moodTags??[]),...(voicing.genreTags??[])]);
-  return {...voicing,moodTags:descriptorTags.filter(tag=>MOOD_TAGS.has(tag)),genreTags:[],descriptorTags};
+  const legacyTags=voicing.descriptorTags??[];
+  return {...voicing,moodTags:normalizedMoodTags([...(voicing.moodTags??[]),...legacyTags]),genreTags:normalizedStyleTags([...(voicing.genreTags??[]),...legacyTags]),descriptorTags:normalizedDescriptorTags(legacyTags)};
 });
 const publishedChords=publishedVoicings.map(voicing=>({
   id:voicing.id,slug:voicing.slug,name:voicing.chordName,
   notes:voicing.fretPositions.map((fret,index)=>fret===null?'×':voicing.notes[voicing.fretPositions.slice(0,index+1).filter(value=>value!==null).length-1]).join(' · '),
-  moods:normalizedMoodTags([...(voicing.moodTags??[]),...(voicing.genreTags??[])]),style:normalizedMoodTags(voicing.genreTags??[])[0]??'Approved',difficulty:voicing.difficulty,
+  moods:normalizedMoodTags(voicing.moodTags??[]),styles:normalizedStyleTags(voicing.genreTags??[]),difficulty:voicing.difficulty,
   frets:voicing.fretPositions.map(fret=>fret??-1),fingers:inferredFingers(voicing.fretPositions.map(fret=>fret??-1),voicing.fingerPositions??[]),
   tones:voicing.fretPositions.flatMap((fret,index)=>fret===null?[]:[440*2**((voicing.tuning.strings[index].midi+fret-69)/12)]),
   chordQuality:voicing.chordQuality,root:voicing.root,category:'Other Approved',displayPriority:100,movable:voicing.movable??false,descriptorTags:voicing.descriptorTags,
@@ -133,14 +132,16 @@ const allChords=chordRecords.map((chord,index)=>{
   const libraryKey=chord.id??`curated:${chord.name}:${chord.frets.join('-')}`;
   const edit=libraryEdits[libraryKey];
   const publicSlug=publishedSlugByKey.get(`${chord.name}|${chord.frets.join('-')}`)??chord.slug??legacyChordSlug(chord.name,libraryKey);
-  return {...chord,id:libraryKey,slug:publicSlug,vaultIndex:index+1,rootKey:chordRoot(chord),qualityFamilyKey:qualityFamily(chord),recipeFamilyKey:recipeFamily(chord),difficulty:edit?.difficulty??chord.difficulty,descriptorTags:normalizedDisplayTags(edit?.descriptorTags??chord.descriptorTags??defaultDescriptorTags(chord))};
+  const legacyTags=edit?.descriptorTags??chord.descriptorTags??defaultDescriptorTags(chord);
+  return {...chord,id:libraryKey,slug:publicSlug,vaultIndex:index+1,rootKey:chordRoot(chord),qualityFamilyKey:qualityFamily(chord),recipeFamilyKey:recipeFamily(chord),difficulty:edit?.difficulty??chord.difficulty,descriptorTags:normalizedDescriptorTags(legacyTags),moods:normalizedMoodTags(edit?.moods??[...(chord.moods??[]),...legacyTags]),styles:normalizedStyleTags(edit?.styles??[...(chord.styles??[]),chord.style??'',...legacyTags])};
 });
-chordRepository.savePublicLibrary(allChords.map(chord=>({key:chord.id,name:chord.name,root:chord.rootKey,chordQuality:chord.chordQuality,difficulty:chord.difficulty,descriptorTags:chord.descriptorTags,frets:chord.frets,fingers:chord.fingers,source:'Main Vault'})));
+chordRepository.savePublicLibrary(allChords.map(chord=>({key:chord.id,name:chord.name,root:chord.rootKey,chordQuality:chord.chordQuality,difficulty:chord.difficulty,descriptorTags:chord.descriptorTags,moods:chord.moods,styles:chord.styles,frets:chord.frets,fingers:chord.fingers,source:'Main Vault'})));
 const finalApprovedKeys=new Set(repositoryWorkspace.publishedKeys);
 const chords=allChords.filter(chord=>finalApprovedKeys.has(chord.id));
 if(repositoryCapabilities.loadError){const status=document.querySelector('#resultCount');if(status)status.textContent=repositoryCapabilities.loadError}
 
 let activeMood = 'All';
+let activeStyle = 'All';
 let activeRoot = 'All';
 let activeQuality = 'All';
 let activeRecipe = 'All';
@@ -156,6 +157,8 @@ if(storedFavorites.some((favorite,index)=>favorite!==resolvedFavorites[index])||
 let savedOnly = false;
 let pageStart = 0;
 const grid = document.querySelector('#chordGrid');
+const moodFilters = document.querySelector('#moodFilters');
+const styleFilters = document.querySelector('#styleFilters');
 const noteFilters = document.querySelector('#noteFilters');
 const qualityFilters = document.querySelector('#qualityFilters');
 const recipeFilters = document.querySelector('#recipeFilters');
@@ -192,6 +195,8 @@ themeToggle.addEventListener('click',()=>{
 syncThemeToggle();
 
 const ROOT_ORDER=['All','A','A#','B','C','C#','D','D#','E','F','F#','G','G#'];
+moodFilters.innerHTML=['All',...MOOD_TAGS].map(value=>`<button type="button" data-mood="${value}" class="${value==='All'?'active':''}" aria-pressed="${value==='All'}">${value}</button>`).join('');
+styleFilters.innerHTML=['All',...STYLE_TAGS].map(value=>`<button type="button" data-style="${value}" class="${value==='All'?'active':''}" aria-pressed="${value==='All'}">${value}</button>`).join('');
 noteFilters.innerHTML=ROOT_ORDER.map(root=>`<button type="button" data-root="${root}" class="${root==='All'?'active':''}" aria-pressed="${root==='All'}">${root}</button>`).join('');
 const QUALITY_OPTIONS=['All','Major','Minor'];
 const RECIPE_OPTIONS=['All','Triad','7th','Sus','9th','11th'];
@@ -225,8 +230,6 @@ function defaultDescriptorTags(chord){
     chord.category==='Essential Open'?'Open':'',
     chord.category==='Essential Barre'?'Barre':'',
     chord.movable?'Movable':'',
-    ...chord.moods,
-    chord.category==='Essential Open'?'':(chord.shapeFamily??chord.style),
   ].filter(Boolean))];
 }
 
@@ -246,7 +249,7 @@ function matchesChordType(chord){
 }
 
 function filteredChords(){
-  return chords.filter(c=>(activeMood==='All'||c.descriptorTags.includes(activeMood))
+  return chords.filter(c=>matchesMoodAndStyle(c,activeMood,activeStyle)
     &&(activeRoot==='All'||c.rootKey===activeRoot)
     &&(activeQuality==='All'||c.qualityFamilyKey===activeQuality)
     &&(activeRecipe==='All'||c.recipeFamilyKey===activeRecipe)
@@ -282,7 +285,7 @@ function render() {
     <span class="card-number">${String(n).padStart(2,'0')}</span><button class="heart ${isSaved?'is-saved':''}" data-save="${c.id}" aria-label="${isSaved?'Remove':'Add'} ${c.name} ${isSaved?'from':'to'} favorites">${isSaved?'♥':'♡'}</button>
     <div class="card-title"><div><h3>${c.name}</h3><p>${c.notes}</p></div><button class="play" data-play="${c.id}" aria-label="Play ${c.name}">▶</button></div>
     <a class="chord-name-link" href="/chords/${encodeURIComponent(c.slug)}" aria-label="View ${c.name} chord details">${c.name}</a>
-    ${diagram(c)}<div class="card-footer"><div class="tags">${c.descriptorTags.map(tag=>`<span class="${tag==='Essential'?'essential-badge':''}">${tag}</span>`).join('')}</div><span class="difficulty" aria-label="Difficulty ${c.difficulty} out of 5"><span class="difficulty-label">Difficulty</span>${[1,2,3,4,5].map(i=>`<i class="${i<=c.difficulty?'on':''}"></i>`).join('')}</span></div>
+    ${diagram(c)}<div class="card-footer"><div class="tags">${[...c.descriptorTags,...c.moods,...c.styles].map(tag=>`<span class="${tag==='Essential'?'essential-badge':''}">${tag}</span>`).join('')}</div><span class="difficulty" aria-label="Difficulty ${c.difficulty} out of 5"><span class="difficulty-label">Difficulty</span>${[1,2,3,4,5].map(i=>`<i class="${i<=c.difficulty?'on':''}"></i>`).join('')}</span></div>
   </article>`}).join('');
   document.querySelector('#empty').hidden=shown.length>0;
   const pageCount=Math.max(1,Math.ceil(shown.length/pageSize));
@@ -296,7 +299,8 @@ function render() {
 }
 
 function updateSaved(){document.querySelector('#savedCount').textContent=saved.size; const b=document.querySelector('#savedButton'); b.setAttribute('aria-label',`${saved.size} saved chords`); b.classList.toggle('active',savedOnly)}
-document.querySelector('.filters').addEventListener('click',e=>{const b=e.target.closest('[data-mood]'); if(!b)return; activeMood=b.dataset.mood;pageStart=0; document.querySelectorAll('[data-mood]').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',x===b)});render()});
+moodFilters.addEventListener('click',e=>{const b=e.target.closest('[data-mood]'); if(!b)return; activeMood=b.dataset.mood;pageStart=0; moodFilters.querySelectorAll('[data-mood]').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',x===b)});render()});
+styleFilters.addEventListener('click',e=>{const b=e.target.closest('[data-style]'); if(!b)return; activeStyle=b.dataset.style;pageStart=0; styleFilters.querySelectorAll('[data-style]').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',x===b)});render()});
 noteFilters.addEventListener('click',event=>{const button=event.target.closest('[data-root]');if(!button)return;activeRoot=button.dataset.root;pageStart=0;noteFilters.querySelectorAll('[data-root]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button)});render()});
 qualityFilters.addEventListener('click',event=>{const button=event.target.closest('[data-quality]');if(!button)return;activeQuality=button.dataset.quality;pageStart=0;qualityFilters.querySelectorAll('[data-quality]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button)});render()});
 recipeFilters.addEventListener('click',event=>{const button=event.target.closest('[data-recipe]');if(!button)return;activeRecipe=button.dataset.recipe;pageStart=0;recipeFilters.querySelectorAll('[data-recipe]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button)});render()});

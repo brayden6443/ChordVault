@@ -30,6 +30,14 @@ function formatStrings(values: Array<number | null>, muted = "×"): string {
 let positions: PublicChordDetails[] = [];
 let currentPosition = 0;
 
+function tagGroup(label: string, values: readonly string[]): HTMLElement {
+  const group = document.createElement("section"); group.className = "chord-tag-group";
+  const heading = document.createElement("span"); heading.className = "chord-tag-label"; heading.textContent = label;
+  const list = document.createElement("div"); list.className = "chord-tag-list";
+  list.replaceChildren(...values.map((value) => { const badge = document.createElement("span"); badge.textContent = value; return badge; }));
+  group.append(heading, list); return group;
+}
+
 function renderPosition(): void {
   const view = positionAt(positions, currentPosition);
   const { chord, fingers } = view;
@@ -45,9 +53,13 @@ function renderPosition(): void {
   document.querySelector<HTMLButtonElement>("#nextPosition")!.disabled = currentPosition === positions.length - 1;
 
   const tags = document.querySelector<HTMLElement>("#chordTags")!;
-  tags.replaceChildren(...chord.tags.map((tag) => {
-    const badge = document.createElement("span"); badge.textContent = tag; return badge;
-  }));
+  const groups = [
+    chord.tags.length ? tagGroup("Chord type", chord.tags) : null,
+    chord.moods.length ? tagGroup("Mood", chord.moods) : null,
+    chord.styles.length ? tagGroup("Style", chord.styles) : null,
+  ].filter((group): group is HTMLElement => group !== null);
+  tags.replaceChildren(...groups);
+  tags.hidden = groups.length === 0;
 
   const facts = document.querySelector<HTMLDListElement>("#chordFacts")!;
   facts.replaceChildren(
@@ -58,7 +70,8 @@ function renderPosition(): void {
     fact("Difficulty", `${chord.difficulty} out of 5`),
     fact("Bass note", chord.bassNote || "Not available"),
     fact("Inversion", chord.inversion),
-    fact("Tags", chord.tags.length ? chord.tags.join(" · ") : "No tags assigned"),
+    fact("Moods", chord.moods.length ? chord.moods.join(" · ") : "No moods assigned"),
+    fact("Styles", chord.styles.length ? chord.styles.join(" · ") : "No styles assigned"),
   );
 }
 

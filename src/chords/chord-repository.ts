@@ -2,6 +2,7 @@ import { exactVoicingKey } from "./identity.ts";
 import { migrateChordRecords, migrationEnvelope, type MigrationReport, type QuarantinedChord } from "./migration.ts";
 import { CHORD_SCHEMA_VERSION, hydratePersistedChord, persistChordVoicing, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./persisted.ts";
 import type { ChordVoicing } from "./types.ts";
+import type { MoodTag, StyleTag } from "./tags.ts";
 
 export interface StoragePort {
   getItem(key: string): string | null;
@@ -10,13 +11,13 @@ export interface StoragePort {
 }
 
 export interface AuditEntry { at: string; action: string; chord: string }
-export interface LibraryEdit { difficulty?: number; descriptorTags?: string[] }
+export interface LibraryEdit { difficulty?: number; descriptorTags?: string[]; moods?: MoodTag[]; styles?: StyleTag[] }
 export interface PublicLibraryItem {
   key: string; name: string; root?: string; chordQuality?: string; difficulty: number;
-  descriptorTags: string[]; frets?: number[]; fingers?: string[]; source: "Main Vault" | "Pre-reviewed" | "Unapproved";
+  descriptorTags: string[]; moods?: MoodTag[]; styles?: StyleTag[]; frets?: number[]; fingers?: string[]; source: "Main Vault" | "Pre-reviewed" | "Unapproved";
 }
 export interface SavedReview {
-  approvalStatus: ChordVoicing["approvalStatus"]; chordName: string; moodTags: string[]; genreTags: string[];
+  approvalStatus: ChordVoicing["approvalStatus"]; chordName: string; moodTags: MoodTag[]; genreTags: StyleTag[];
   description: string; difficulty: ChordVoicing["difficulty"]; descriptorTags?: string[];
 }
 
@@ -180,7 +181,7 @@ export class LocalStorageChordRepository implements ChordRepository {
   savePublicLibrary(items: PublicLibraryItem[]): void { this.mutate((w) => { w.publicLibrary = items; }); }
   saveReview(id: string, review: SavedReview): void { this.mutate((w) => { w.savedReviews[id] = review; }); }
   importPreReviewed(voicings: ChordVoicing[]): void { this.mutate((w) => { const keys = new Set(w.preReviewed.map(exactVoicingKey)); for (const voicing of voicings) { const key = exactVoicingKey(voicing); if (!keys.has(key)) { keys.add(key); w.preReviewed.push(voicing); } } }); }
-  updateEditorialFields(id: string, edit: LibraryEdit): void { this.mutate((w) => { w.libraryEdits[id] = { ...w.libraryEdits[id], ...edit }; for (const record of [...w.preReviewed, ...w.published]) if (record.id === id) { if (edit.difficulty !== undefined) record.difficulty = edit.difficulty as ChordVoicing["difficulty"]; if (edit.descriptorTags) record.descriptorTags = [...edit.descriptorTags]; } }); }
+  updateEditorialFields(id: string, edit: LibraryEdit): void { this.mutate((w) => { w.libraryEdits[id] = { ...w.libraryEdits[id], ...edit }; for (const record of [...w.preReviewed, ...w.published]) if (record.id === id) { if (edit.difficulty !== undefined) record.difficulty = edit.difficulty as ChordVoicing["difficulty"]; if (edit.descriptorTags) record.descriptorTags = [...edit.descriptorTags]; if (edit.moods) record.moodTags = [...edit.moods]; if (edit.styles) record.genreTags = [...edit.styles]; } }); }
   moveToPreReviewed(voicing: ChordVoicing): void { this.mutate((w) => { if ([...w.preReviewed, ...w.published].some((v) => exactVoicingKey(v) === exactVoicingKey(voicing) && v.id !== voicing.id)) throw new ChordRepositoryError("DUPLICATE_CONFLICT", "Duplicate voicing."); voicing.approvalStatus = "approved"; w.preReviewed = [...w.preReviewed.filter((v) => v.id !== voicing.id), voicing]; w.candidates = w.candidates.filter((v) => v.id !== voicing.id); }); }
   publishVoicing(voicing: ChordVoicing): void { this.mutate((w) => { const duplicate = w.published.find((v) => exactVoicingKey(v) === exactVoicingKey(voicing) && v.id !== voicing.id); if (duplicate) throw new ChordRepositoryError("DUPLICATE_CONFLICT", "Duplicate voicing."); voicing.approvalStatus = "approved"; w.preReviewed = w.preReviewed.filter((v) => v.id !== voicing.id); w.published = [...w.published.filter((v) => v.id !== voicing.id), voicing]; w.publishedKeys = [...new Set([...w.publishedKeys, voicing.id])]; }); }
   approvePublicVoicing(id: string): void { this.mutate((w) => { w.publishedKeys = [...new Set([...w.publishedKeys, id])]; }); }
@@ -188,7 +189,7 @@ export class LocalStorageChordRepository implements ChordRepository {
   restoreRejectedVoicing(voicing: ChordVoicing): void { this.mutate((w) => { w.rejectedShapes = w.rejectedShapes.filter((key) => key !== exactVoicingKey(voicing)); w.candidates.push(voicing); }); }
   markReviewLater(ids: string[]): void { this.mutate((w) => { w.reviewLater = [...new Set([...w.reviewLater, ...ids])]; }); }
   replacePublishedVoicing(replacedId: string, replacement: ChordVoicing): void { this.mutate((w) => { if (!w.published.some((v) => v.id === replacedId) && !w.publishedKeys.includes(replacedId)) throw new ChordRepositoryError("MISSING_RECORD", "Published chord not found."); w.published = w.published.filter((v) => v.id !== replacedId); w.publishedKeys = w.publishedKeys.filter((id) => id !== replacedId); w.preReviewed = w.preReviewed.filter((v) => v.id !== replacement.id); if (!w.publicLibrary?.some((item) => item.key === replacement.id)) w.published.push(replacement); w.publishedKeys.push(replacement.id); }); }
-  mergeVoicings(targetId: string, source: ChordVoicing): void { this.mutate((w) => { const target = w.published.find((v) => v.id === targetId); const tags = [...new Set([...(target?.descriptorTags ?? w.libraryEdits[targetId]?.descriptorTags ?? []), ...(source.descriptorTags ?? []), ...source.moodTags, ...source.genreTags])]; if (target) { target.descriptorTags = tags; target.description ||= source.description; } else if (w.publicLibrary?.some((v) => v.key === targetId)) w.libraryEdits[targetId] = { ...w.libraryEdits[targetId], descriptorTags: tags }; else throw new ChordRepositoryError("MISSING_RECORD", "Merge target not found."); }); }
+  mergeVoicings(targetId: string, source: ChordVoicing): void { this.mutate((w) => { const target = w.published.find((v) => v.id === targetId); const tags = [...new Set([...(target?.descriptorTags ?? w.libraryEdits[targetId]?.descriptorTags ?? []), ...(source.descriptorTags ?? [])])]; const moods = [...new Set([...(target?.moodTags ?? w.libraryEdits[targetId]?.moods ?? []), ...source.moodTags])]; const styles = [...new Set([...(target?.genreTags ?? w.libraryEdits[targetId]?.styles ?? []), ...source.genreTags])]; if (target) { target.descriptorTags = tags; target.moodTags = moods; target.genreTags = styles; target.description ||= source.description; } else if (w.publicLibrary?.some((v) => v.key === targetId)) w.libraryEdits[targetId] = { ...w.libraryEdits[targetId], descriptorTags: tags, moods, styles }; else throw new ChordRepositoryError("MISSING_RECORD", "Merge target not found."); }); }
   listFavorites(): string[] { return this.loadWorkspace().favorites; }
   addFavorite(name: string): void { this.mutate((w) => { w.favorites = [...new Set([...w.favorites, name])]; }); }
   removeFavorite(name: string): void { this.mutate((w) => { w.favorites = w.favorites.filter((item) => item !== name); }); }

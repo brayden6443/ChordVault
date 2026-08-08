@@ -5,6 +5,7 @@ import { CHORD_SCHEMA_VERSION, hydratePersistedChord, persistChordVoicing, valid
 import { recipeById, recipeIdFromChordName, requireRecipe } from "./recipes.ts";
 import { pitchClassFromName, pitchClassName } from "./theory.ts";
 import { STANDARD_TUNING, type ChordVoicing } from "./types.ts";
+import { normalizedDescriptorTags, normalizedMoodTags, normalizedStyleTags } from "./tags.ts";
 
 interface LegacyPublicRecord {
   key?: unknown; name?: unknown; root?: unknown; chordQuality?: unknown; difficulty?: unknown;
@@ -65,7 +66,7 @@ function publicDraft(record: LegacyPublicRecord, id: string): ChordVoicing {
   const base = canonicalLike ?? buildCanonicalLibrary(false)[0];
   if (!base) throw new Error("canonical source is unavailable");
   return { ...base, id, chordName: record.name, chordQuality: recipe.id, root, tuning: STANDARD_TUNING, fretPositions: frets,
-    difficulty: difficulty(record.difficulty), descriptorTags: tags, moodTags: tags, genreTags: [], description: "", source: "Legacy browser publicLibrary reconstruction", approvalStatus: "approved" };
+    difficulty: difficulty(record.difficulty), descriptorTags: normalizedDescriptorTags(tags), moodTags: normalizedMoodTags(tags), genreTags: normalizedStyleTags(tags), description: "", source: "Legacy browser publicLibrary reconstruction", approvalStatus: "approved" };
 }
 
 function editFor(raw: Record<string, unknown>, id: string): LegacyEdit | undefined {
