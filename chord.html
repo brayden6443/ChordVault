@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/src/chord-page.css" />
     <link rel="stylesheet" href="/src/chord-page-layout.css" />
+    <link rel="stylesheet" href="/src/chord-position.css" />
   </head>
   <body>
     <main>
@@ -28,7 +29,14 @@
           <p class="chord-detail-description" id="chordDescription">Loading chord details…</p>
         </header>
         <div class="chord-detail-layout" id="chordContent" aria-live="polite">
-          <div class="chord-detail-diagram" id="chordDiagram" aria-hidden="true"></div>
+          <div class="chord-detail-diagram" id="chordDiagram" aria-hidden="true">
+            <div class="chord-diagram-graphic" id="chordDiagramGraphic"></div>
+            <div class="chord-position-controls" id="chordPositionControls" hidden>
+              <button id="previousPosition" type="button" aria-label="Previous chord position">Previous</button>
+              <span id="positionStatus" aria-live="polite"></span>
+              <button id="nextPosition" type="button" aria-label="Next chord position">Next</button>
+            </div>
+          </div>
           <div class="chord-detail-tags" id="chordTags" aria-label="Chord tags"></div>
           <dl class="chord-facts" id="chordFacts"></dl>
         </div>

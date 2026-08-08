@@ -1,4 +1,4 @@
-import { inferFingerLabels, renderChordDiagram } from "./chords/diagram.ts";
+import { hasMultiplePositions, positionAt } from "./chords/chord-positions.ts";
 import type { PublicChordDetails } from "./chords/public-chord.ts";
 
 const stringNames = ["low E", "A", "D", "G", "B", "high e"];
@@ -27,14 +27,22 @@ function formatStrings(values: Array<number | null>, muted = "×"): string {
   return values.map((value) => value === null ? muted : String(value)).join(" · ");
 }
 
-function render(chord: PublicChordDetails): void {
+let positions: PublicChordDetails[] = [];
+let currentPosition = 0;
+
+function renderPosition(): void {
+  const view = positionAt(positions, currentPosition);
+  const { chord, fingers } = view;
   document.querySelector<HTMLElement>("#chordPageName")!.textContent = chord.chordName;
   document.querySelector<HTMLElement>("#chordTuning")!.textContent = `${chord.tuningName} tuning`;
   document.querySelector<HTMLElement>("#chordDescription")!.textContent = chord.description || `A ${chord.chordName} voicing in ${chord.tuningName} tuning.`;
-  const frets = chord.fretPositions.map((fret) => fret ?? -1);
-  const fingers = inferFingerLabels(frets, chord.fingerPositions);
-  document.querySelector<HTMLElement>("#chordDiagram")!.innerHTML = renderChordDiagram({ name: chord.chordName, frets, fingers });
+  document.querySelector<HTMLElement>("#chordDiagramGraphic")!.innerHTML = view.diagram;
   document.querySelector<HTMLElement>("#chordDiagram")!.removeAttribute("aria-hidden");
+  const controls = document.querySelector<HTMLElement>("#chordPositionControls")!;
+  controls.hidden = !hasMultiplePositions(positions);
+  document.querySelector<HTMLElement>("#positionStatus")!.textContent = `Position ${currentPosition + 1} of ${positions.length}`;
+  document.querySelector<HTMLButtonElement>("#previousPosition")!.disabled = currentPosition === 0;
+  document.querySelector<HTMLButtonElement>("#nextPosition")!.disabled = currentPosition === positions.length - 1;
 
   const tags = document.querySelector<HTMLElement>("#chordTags")!;
   tags.replaceChildren(...chord.tags.map((tag) => {
@@ -70,11 +78,16 @@ async function load(): Promise<void> {
   try {
     const response = await fetch(`/api/chords/slug/${encodeURIComponent(slug)}`, { headers: { Accept: "application/json" } });
     if (!response.ok) { showNotFound(); return; }
-    const payload = await response.json() as { chord?: PublicChordDetails };
+    const payload = await response.json() as { chord?: PublicChordDetails; positions?: PublicChordDetails[]; positionIndex?: number };
     if (!payload.chord || payload.chord.slug !== slug) { showNotFound(); return; }
-    render(payload.chord);
+    positions = payload.positions?.length ? payload.positions : [payload.chord];
+    currentPosition = Number.isInteger(payload.positionIndex) && payload.positionIndex! >= 0 && payload.positionIndex! < positions.length ? payload.positionIndex! : 0;
+    renderPosition();
   } catch { showNotFound(); }
 }
+
+document.querySelector<HTMLButtonElement>("#previousPosition")!.addEventListener("click", () => { if (currentPosition > 0) { currentPosition -= 1; renderPosition(); } });
+document.querySelector<HTMLButtonElement>("#nextPosition")!.addEventListener("click", () => { if (currentPosition < positions.length - 1) { currentPosition += 1; renderPosition(); } });
 
 const themeToggle = document.querySelector<HTMLButtonElement>("#themeToggle")!;
 function syncTheme(): void {

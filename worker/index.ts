@@ -60,7 +60,9 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     const chordSlugMatch = path.match(/^\/api\/chords\/slug\/([^/]+)$/);
     if (request.method === "GET" && chordSlugMatch) {
       const resolution = await store.resolvePublishedSlug(decodeURIComponent(chordSlugMatch[1]));
-      return resolution ? json({ chord: toPublicChordDetails(resolution.record, resolution.slug) }, 200, true) : json({ error: { code: "NOT_FOUND", message: "Chord not found." } }, 404, true);
+      if (!resolution) return json({ error: { code: "NOT_FOUND", message: "Chord not found." } }, 404, true);
+      const positions = resolution.positions.map((position) => toPublicChordDetails(position.record, position.slug));
+      return json({ chord: positions[resolution.positionIndex], positions, positionIndex: resolution.positionIndex }, 200, true);
     }
     const chordMatch = path.match(/^\/api\/chords\/([^/]+)$/);
     if (request.method === "GET" && chordMatch) {

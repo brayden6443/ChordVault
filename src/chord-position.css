@@ -1,0 +1,50 @@
+.chord-detail-diagram {
+  flex-direction: column;
+}
+
+.chord-diagram-graphic {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  width: 100%;
+}
+
+.chord-position-controls {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr auto 1fr;
+  margin-top: 24px;
+  padding-top: 18px;
+  width: 100%;
+}
+
+.chord-position-controls[hidden] { display: none; }
+.chord-position-controls button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 10px;
+  letter-spacing: .1em;
+  min-height: 44px;
+  padding: 0 12px;
+  text-transform: uppercase;
+}
+.chord-position-controls button:last-child { justify-self: end; }
+.chord-position-controls button:disabled { opacity: .35; }
+.chord-position-controls span {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .chord-position-controls { gap: 7px; }
+  .chord-position-controls button { padding-inline: 8px; }
+  .chord-position-controls span { font-size: 10px; }
+}

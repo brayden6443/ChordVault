@@ -5,7 +5,8 @@ import type { D1Database, D1PreparedStatement } from "./types.ts";
 
 interface ChordRow { id: string; schema_version: number; record_json: string }
 export interface HostedImportReport { inserted: number; updated: number; skipped: number; duplicate: number; quarantined: number; failed: number; diagnostics: string[] }
-export interface PublishedSlugResolution { record: PersistedChordRecordV1; slug: string; legacy: boolean }
+export interface PublishedPosition { record: PersistedChordRecordV1; slug: string }
+export interface PublishedSlugResolution { record: PersistedChordRecordV1; slug: string; legacy: boolean; positions: PublishedPosition[]; positionIndex: number }
 
 export class HostedDataError extends Error {
   readonly code: "INVALID_RECORD" | "UNKNOWN_VERSION" | "DUPLICATE" | "NOT_FOUND" | "DATABASE";
@@ -25,6 +26,7 @@ function parseRow(row: ChordRow): PersistedChordRecordV1 {
 }
 
 function slug(value: string): string { return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+function lowestPlayedFret(frets: Array<number | null>): number { const played = frets.filter((fret): fret is number => fret !== null && fret > 0); return played.length ? Math.min(...played) : 0; }
 
 export class D1ChordStore {
   private readonly db: D1Database;
@@ -48,7 +50,21 @@ export class D1ChordStore {
       const canonical = chord.slug === slug; const legacy = legacyChordSlug(chord.chordName, chord.id) === slug;
       if (canonical || legacy) {
         const record = published.find((candidate) => candidate.id === chord.id);
-        if (record) return { record, slug: chord.slug, legacy: !canonical && legacy };
+        if (record) {
+          const positions = chords.filter((candidate) => candidate.root === chord.root
+            && candidate.chordQuality === chord.chordQuality
+            && candidate.chordName === chord.chordName
+            && candidate.tuning.id === chord.tuning.id)
+            .sort((left, right) => Number(right.openStringCount > 0) - Number(left.openStringCount > 0)
+              || lowestPlayedFret(left.fretPositions) - lowestPlayedFret(right.fretPositions)
+              || left.fretPositions.map((fret) => fret ?? -1).join("-").localeCompare(right.fretPositions.map((fret) => fret ?? -1).join("-"))
+              || left.id.localeCompare(right.id))
+            .flatMap((position) => {
+              const positionRecord = published.find((candidate) => candidate.id === position.id);
+              return positionRecord ? [{ record: positionRecord, slug: position.slug }] : [];
+            });
+          return { record, slug: chord.slug, legacy: !canonical && legacy, positions, positionIndex: positions.findIndex((position) => position.record.id === record.id) };
+        }
       }
     }
     return null;

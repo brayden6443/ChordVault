@@ -15,8 +15,10 @@ import type { D1Database, WorkerEnv } from "../worker/types.ts";
 
 class MemoryStorage implements StoragePort { values = new Map<string, string>(); getItem(key: string): string | null { return this.values.get(key) ?? null; } setItem(key: string, value: string): void { this.values.set(key, value); } removeItem(key: string): void { this.values.delete(key); } }
 const cMajor = CANONICAL_VOICINGS.find((item) => item.chordName === "C" && item.category === "Essential Open")!;
+const cMajorBarre = CANONICAL_VOICINGS.find((item) => item.chordName === "C" && item.category === "Essential Barre")!;
 const dMajor = CANONICAL_VOICINGS.find((item) => item.chordName === "D" && item.category === "Essential Open")!;
 const cRecord = persistChordVoicing({ ...cMajor, id: "hosted-c" }, "published");
+const cBarreRecord = persistChordVoicing({ ...cMajorBarre, id: "hosted-c-barre" }, "published");
 const dRecord = persistChordVoicing({ ...dMajor, id: "hosted-d" }, "published");
 async function applyMigration(db: D1Database): Promise<void> { const sql = await readFile(new URL("../migrations/0001_initial_schema.sql", import.meta.url), "utf8"); for (const statement of sql.split(";").map((part) => part.trim()).filter(Boolean)) await db.prepare(statement).run(); }
 const adminDependencies = { authenticate: async () => ({ ok: true as const, principal: { email: "admin@example.test", subject: "admin", expiresAt: 2_000_000_000 } }) };
@@ -81,12 +83,14 @@ test("disabled production mutations stay hidden while public API remains unauthe
 test("published chords have a public slug endpoint while unpublished chords remain hidden", async () => {
   const { mf, db, store } = await database();
   await store.publish(cRecord);
+  await store.publish(cBarreRecord);
   await store.preReview({ ...dRecord, workflowStatus: "pre-reviewed" });
   const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
   const slug = hydratePersistedChord(cRecord).slug;
   const response = await handleApi(new Request(`https://example.test/api/chords/slug/${slug}`), env);
-  const payload = await response.json() as { chord: { id: string; slug: string; notes: string[]; qualityScore?: number } };
+  const payload = await response.json() as { chord: { id: string; slug: string; notes: string[]; qualityScore?: number }; positions: Array<{ id: string }>; positionIndex: number };
   assert.equal(response.status, 200); assert.equal(payload.chord.id, cRecord.id); assert.equal(payload.chord.slug, slug); assert.ok(payload.chord.notes.length > 0); assert.equal(payload.chord.qualityScore, undefined);
+  assert.deepEqual(payload.positions.map((position) => position.id), [cRecord.id, cBarreRecord.id]); assert.equal(payload.positionIndex, 0);
   const hiddenSlug = hydratePersistedChord({ ...dRecord, workflowStatus: "pre-reviewed" }).slug;
   assert.equal((await handleApi(new Request(`https://example.test/api/chords/slug/${hiddenSlug}`), env)).status, 404);
   await mf.dispose();
