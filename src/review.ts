@@ -5,7 +5,8 @@ import { generateBatch, generateVoicings } from "./chords/generator.ts";
 import { bassPitch, intervalLabel, intervalsRelativeToRoot, inversionForPitches, pitchesForVoicing } from "./chords/theory.ts";
 import { fretSpanFor } from "./chords/playability.ts";
 import { exactVoicingKey } from "./chords/identity.ts";
-import { createChordRepository } from "./chords/repository-composition.ts";
+import { createChordRepository, repositoryConfiguration } from "./chords/repository-composition.ts";
+import { preparedPreReviewedImport, uploadPreparedImport } from "./chords/hosted-import.ts";
 import { CHORD_SCHEMA_VERSION, hydratePersistedChord, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./chords/persisted.ts";
 import { generatorRecipes, recipeById, recipeIdFromChordName } from "./chords/recipes.ts";
 import { STANDARD_TUNING, type ApprovalStatus, type ChordVoicing } from "./chords/types.ts";
@@ -13,6 +14,7 @@ import { MOOD_TAGS, STYLE_TAGS, STRUCTURAL_TAGS, normalizedDescriptorTags, norma
 
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const RECIPES = generatorRecipes();
+const repositoryConfig = repositoryConfiguration(import.meta.env);
 const { repository: chordRepository, capabilities: repositoryCapabilities } = await createChordRepository({ localStorage, sessionStorage, env: import.meta.env });
 const initialWorkspace = chordRepository.loadWorkspace();
 
@@ -308,7 +310,11 @@ async function importApprovedFile(file: File): Promise<void> {
         existingKeys.add(key); approvedVault.push(voicing); imported += 1;
       } catch { invalid += 1; }
     }
-    chordRepository.importPreReviewed(approvedVault);
+    if (repositoryCapabilities.backend === "hosted") {
+      await uploadPreparedImport(preparedPreReviewedImport(approvedVault), { apiBase: repositoryConfig.apiBase, dryRun: false });
+    } else {
+      chordRepository.importPreReviewed(approvedVault);
+    }
     importStatus.textContent = `${file.name}: ${imported} imported to Pre-reviewed, ${duplicates} duplicate, ${invalid} invalid.`;
     renderLibraryEditor();
   } catch (error) {

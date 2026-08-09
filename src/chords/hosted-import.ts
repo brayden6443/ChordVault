@@ -1,5 +1,6 @@
 import { migrateChordRecords, type QuarantinedChord } from "./migration.ts";
-import type { PersistedChordRecordV1 } from "./persisted.ts";
+import { persistChordVoicing, type PersistedChordRecordV1 } from "./persisted.ts";
+import type { ChordVoicing } from "./types.ts";
 
 export interface PreparedHostedImport {
   backup: string;
@@ -20,8 +21,13 @@ export function prepareHostedImport(raw: unknown): PreparedHostedImport {
 }
 
 export async function uploadPreparedImport(prepared: PreparedHostedImport, options: { apiBase: string; dryRun: boolean; fetcher?: typeof fetch }): Promise<unknown> {
-  const fetcher = options.fetcher ?? fetch; const response = await fetcher(`${options.apiBase.replace(/\/$/, "")}/admin/chords/import`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ records: prepared.records, dryRun: options.dryRun }) });
+  const fetcher = options.fetcher ?? fetch; const response = await fetcher(`${options.apiBase.replace(/\/$/, "")}/admin/chords/import`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ records: prepared.records, dryRun: options.dryRun }) });
   const result = await response.json(); if (!response.ok) throw new Error("Hosted import was rejected. No local data was changed."); return result;
+}
+
+export function preparedPreReviewedImport(voicings: ChordVoicing[]): PreparedHostedImport {
+  const records = voicings.map((voicing) => persistChordVoicing(voicing, "pre-reviewed"));
+  return { backup: JSON.stringify(records, null, 2), records, quarantine: [], report: { validated: records.length, skipped: 0, quarantined: 0, failed: 0, diagnostics: [] } };
 }
 
 export async function backupThenUpload<T>(prepared: PreparedHostedImport, saveBackup: (contents: string) => Promise<void>, upload: () => Promise<T>): Promise<T> { await saveBackup(prepared.backup); return upload(); }

@@ -5,7 +5,7 @@ import { Miniflare } from "miniflare";
 import { CANONICAL_VOICINGS } from "../src/chords/canonical.ts";
 import { LocalStorageChordRepository, type StoragePort } from "../src/chords/chord-repository.ts";
 import { HostedReadChordRepository } from "../src/chords/hosted-repository.ts";
-import { backupThenUpload, prepareHostedImport } from "../src/chords/hosted-import.ts";
+import { backupThenUpload, preparedPreReviewedImport, prepareHostedImport, uploadPreparedImport } from "../src/chords/hosted-import.ts";
 import { hydratePersistedChord, persistChordVoicing } from "../src/chords/persisted.ts";
 import { createChordRepository, repositoryConfiguration } from "../src/chords/repository-composition.ts";
 import { legacyChordSlug } from "../src/chords/slug.ts";
@@ -74,6 +74,18 @@ test("import dry-run is non-mutating and retry is idempotent", async () => {
   const first = await store.importRecords([cRecord], false); const retry = await store.importRecords([cRecord], false); assert.equal(first.inserted, 1); assert.equal(retry.skipped, 1); await mf.dispose();
 });
 
+test("hosted review import posts pre-reviewed records with the current Access session", async () => {
+  let requestUrl = ""; let requestInit: RequestInit | undefined;
+  const prepared = preparedPreReviewedImport([cMajor]);
+  await uploadPreparedImport(prepared, { apiBase: "/api", dryRun: false, fetcher: async (input, init) => {
+    requestUrl = String(input); requestInit = init; return Response.json({ report: { inserted: 1 } });
+  } });
+  assert.equal(requestUrl, "/api/admin/chords/import");
+  assert.equal(requestInit?.credentials, "same-origin");
+  const payload = JSON.parse(String(requestInit?.body)) as { records: Array<{ workflowStatus: string }>; dryRun: boolean };
+  assert.equal(payload.records.length, 1); assert.equal(payload.records[0]?.workflowStatus, "pre-reviewed"); assert.equal(payload.dryRun, false);
+});
+
 test("disabled production mutations stay hidden while public API remains unauthenticated", async () => {
   const { mf, db, store } = await database(); await store.publish(cRecord); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
   const publicResponse = await handleApi(new Request("https://example.test/api/chords/published"), env); assert.equal(publicResponse.status, 200); assert.equal(((await publicResponse.json()) as { records: unknown[] }).records.length, 1);
@@ -119,6 +131,7 @@ test("review route and every admin endpoint reject unauthenticated requests", as
   assert.equal((await handleRequest(new Request("https://example.test/review.html"), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/audit"), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/export?format=json"), env, unauthenticated)).status, 401);
+  assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/import", { method: "POST", body: JSON.stringify({ records: [] }) }), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/x/reject", { method: "POST" }), env, unauthenticated)).status, 401);
   await mf.dispose();
 });
