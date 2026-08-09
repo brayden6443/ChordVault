@@ -11,6 +11,7 @@ import { CHORD_SCHEMA_VERSION, hydratePersistedChord, safeParseJson, validatePer
 import { generatorRecipes, recipeById, recipeIdFromChordName } from "./chords/recipes.ts";
 import { STANDARD_TUNING, type ApprovalStatus, type ChordVoicing } from "./chords/types.ts";
 import { MOOD_TAGS, STYLE_TAGS, STRUCTURAL_TAGS, normalizedDescriptorTags, normalizedMoodTags, normalizedStyleTags, type MoodTag, type StyleTag } from "./chords/tags.ts";
+import { importRecordCandidate, parseCsvObjects } from "./chords/csv-import.ts";
 
 const ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const RECIPES = generatorRecipes();
@@ -216,28 +217,6 @@ function splitTags(value: string): string[] {
   return [...new Set(value.split(",").map((tag) => tag.trim()).filter(Boolean))];
 }
 
-function csvRows(text: string): string[][] {
-  const rows: string[][] = []; let row: string[] = []; let cell = ""; let quoted = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-    if (character === '"' && quoted && text[index + 1] === '"') { cell += '"'; index += 1; }
-    else if (character === '"') quoted = !quoted;
-    else if (character === "," && !quoted) { row.push(cell); cell = ""; }
-    else if ((character === "\n" || character === "\r") && !quoted) {
-      if (character === "\r" && text[index + 1] === "\n") index += 1;
-      row.push(cell); if (row.some(Boolean)) rows.push(row); row = []; cell = "";
-    } else cell += character;
-  }
-  row.push(cell); if (row.some(Boolean)) rows.push(row);
-  return rows;
-}
-
-function parseCsvObjects(text: string): Record<string, unknown>[] {
-  const [headers, ...rows] = csvRows(text);
-  if (!headers) return [];
-  return rows.map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])));
-}
-
 function importedQuality(name: string, supplied?: unknown): string {
   if (typeof supplied === "string" && recipeById(supplied)) return recipeById(supplied)!.id;
   return recipeIdFromChordName(name);
@@ -255,8 +234,9 @@ function importHash(value: string): string {
 }
 
 function normalizeImportedVoicing(raw: Record<string, unknown>, index: number): ChordVoicing {
-  if ("schemaVersion" in raw) {
-    const validated = validatePersistedChord(raw);
+  const candidate = importRecordCandidate(raw, index);
+  if ("schemaVersion" in candidate) {
+    const validated = validatePersistedChord(candidate);
     if (!validated.ok) throw new Error(`Row ${index + 1}: ${validated.issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
     return hydratePersistedChord({ ...validated.value, workflowStatus: "pre-reviewed" });
   }
@@ -301,21 +281,22 @@ async function importApprovedFile(file: File): Promise<void> {
     const parsed = file.name.toLowerCase().endsWith(".csv") ? parseCsvObjects(text) : json!.value as Record<string, unknown> | Record<string, unknown>[];
     const records = Array.isArray(parsed) ? parsed : Array.isArray(parsed.voicings) ? parsed.voicings : [parsed];
     const existingKeys = new Set(approvedVault.map(exactVoicingKey));
-    let imported = 0; let duplicates = 0; let invalid = 0;
+    let imported = 0; let duplicates = 0; let invalid = 0; const invalidReasons: string[] = [];
     for (let index = 0; index < records.length; index += 1) {
       try {
         const voicing = normalizeImportedVoicing(records[index], index);
         const key = exactVoicingKey(voicing);
         if (existingKeys.has(key)) { duplicates += 1; continue; }
         existingKeys.add(key); approvedVault.push(voicing); imported += 1;
-      } catch { invalid += 1; }
+      } catch (error) { invalid += 1; invalidReasons.push(error instanceof Error ? error.message : `Row ${index + 1}: invalid record`); }
     }
     if (repositoryCapabilities.backend === "hosted") {
       await uploadPreparedImport(preparedPreReviewedImport(approvedVault), { apiBase: repositoryConfig.apiBase, dryRun: false });
     } else {
       chordRepository.importPreReviewed(approvedVault);
     }
-    importStatus.textContent = `${file.name}: ${imported} imported to Pre-reviewed, ${duplicates} duplicate, ${invalid} invalid.`;
+    const reasonSummary = invalidReasons.length ? ` ${invalidReasons.slice(0, 5).join(" | ")}${invalidReasons.length > 5 ? ` | +${invalidReasons.length - 5} more` : ""}` : "";
+    importStatus.textContent = `${file.name}: ${imported} imported to Pre-reviewed, ${duplicates} duplicate, ${invalid} invalid.${reasonSummary}`;
     renderLibraryEditor();
   } catch (error) {
     importStatus.textContent = `Import failed: ${error instanceof Error ? error.message : "invalid file"}`;

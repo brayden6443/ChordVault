@@ -6,12 +6,14 @@ import { CANONICAL_VOICINGS } from "../src/chords/canonical.ts";
 import { LocalStorageChordRepository, type StoragePort } from "../src/chords/chord-repository.ts";
 import { HostedReadChordRepository } from "../src/chords/hosted-repository.ts";
 import { backupThenUpload, preparedPreReviewedImport, prepareHostedImport, uploadPreparedImport } from "../src/chords/hosted-import.ts";
-import { hydratePersistedChord, persistChordVoicing } from "../src/chords/persisted.ts";
+import { hydratePersistedChord, persistChordVoicing, validatePersistedChord } from "../src/chords/persisted.ts";
 import { createChordRepository, repositoryConfiguration } from "../src/chords/repository-composition.ts";
 import { legacyChordSlug } from "../src/chords/slug.ts";
 import { D1ChordStore, HostedDataError } from "../worker/d1-repository.ts";
 import worker, { handleApi, handleRequest } from "../worker/index.ts";
 import type { D1Database, WorkerEnv } from "../worker/types.ts";
+import { importRecordCandidate, parseCsvObjects } from "../src/chords/csv-import.ts";
+import { chordExportCsv, createChordExport } from "../src/chords/admin-export.ts";
 
 class MemoryStorage implements StoragePort { values = new Map<string, string>(); getItem(key: string): string | null { return this.values.get(key) ?? null; } setItem(key: string, value: string): void { this.values.set(key, value); } removeItem(key: string): void { this.values.delete(key); } }
 const cMajor = CANONICAL_VOICINGS.find((item) => item.chordName === "C" && item.category === "Essential Open")!;
@@ -166,6 +168,19 @@ test("administrator export handles an empty database", async () => {
   const csvResponse = await handleApi(new Request("https://example.test/api/admin/chords/export?format=csv"), env, adminDependencies);
   const csv = await csvResponse.text(); assert.equal(csv.split("\r\n").length, 1); assert.match(csv, /^schemaVersion,id,chordName/);
   await mf.dispose();
+});
+
+test("a freshly exported chord CSV round-trips through strict persisted validation", () => {
+  const csv = chordExportCsv(createChordExport([cRecord, dRecord], new Date("2026-08-08T00:00:00Z")));
+  const imported = parseCsvObjects(csv).map((row, index) => importRecordCandidate(row, index));
+  const validated = imported.map(validatePersistedChord);
+  assert.equal(validated.every((result) => result.ok), true);
+  assert.deepEqual(validated.flatMap((result) => result.ok ? [result.value.id] : []), [cRecord.id, dRecord.id]);
+  const first = validated[0]; assert.equal(first?.ok, true);
+  if (first?.ok) {
+    assert.deepEqual(first.value.fretPositions, cRecord.fretPositions); assert.deepEqual(first.value.tuning, cRecord.tuning);
+    assert.equal(first.value.workflowStatus, cRecord.workflowStatus); assert.deepEqual(first.value.tags, cRecord.tags);
+  }
 });
 
 test("exported fetch does not pass Cloudflare ExecutionContext into dependency injection", async () => {
