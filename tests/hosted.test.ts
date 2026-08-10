@@ -56,6 +56,48 @@ test("duplicate published voicings conflict", async () => {
   await assert.rejects(store.publish({ ...cRecord, id: "duplicate-c" }), (error) => error instanceof HostedDataError && error.code === "DUPLICATE"); await mf.dispose();
 });
 
+test("duplicate lookup reports a duplicate that is currently published", async () => {
+  const { mf, store } = await database(); await store.publish(cRecord);
+  const duplicate = await store.findDuplicate({ ...cRecord, id: "incoming-c", workflowStatus: "pre-reviewed" });
+  assert.equal(duplicate?.record.id, cRecord.id); assert.equal(duplicate?.record.workflowStatus, "published"); assert.equal(duplicate?.exact, true);
+  await mf.dispose();
+});
+
+test("duplicate lookup finds archived chords but ignores quarantine rows", async () => {
+  const { mf, db, store } = await database(); await store.publish(cRecord); await store.reject(cRecord.id);
+  await db.prepare("INSERT INTO quarantined_records (source,raw_json,issues_json) VALUES (?1,?2,?3)").bind("test", JSON.stringify({ ...cRecord, id: "quarantined-c" }), "[]").run();
+  const duplicate = await store.findDuplicate({ ...cRecord, id: "incoming-c", workflowStatus: "pre-reviewed" });
+  assert.equal(duplicate?.record.id, cRecord.id); assert.equal(duplicate?.record.workflowStatus, "rejected");
+  await store.publish({ ...dRecord, id: "incoming-d" });
+  assert.equal((await store.list("published")).some((record) => record.id === "quarantined-c"), false);
+  await mf.dispose();
+});
+
+test("a stale duplicate destination is rejected without changing D1", async () => {
+  const { mf, store } = await database();
+  await assert.rejects(store.replace("deleted-record", cRecord), (error) => error instanceof HostedDataError && error.code === "NOT_FOUND");
+  await assert.rejects(store.merge("deleted-record", cRecord), (error) => error instanceof HostedDataError && error.code === "NOT_FOUND");
+  assert.equal((await store.listAll()).length, 0); await mf.dispose();
+});
+
+test("merge combines allowed metadata and restores the destination to published", async () => {
+  const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed", tags: ["Open"] }); await store.reject(cRecord.id);
+  const source = { ...cRecord, id: "incoming-c", workflowStatus: "pre-reviewed" as const, description: "New description", tags: ["Essential"], moods: ["Warm" as const], styles: ["Blues" as const] };
+  await store.preReview(source); const merged = await store.merge(cRecord.id, source, "admin@example.test");
+  assert.equal(merged.workflowStatus, "published"); assert.equal(merged.description, "New description"); assert.deepEqual(merged.tags.sort(), ["Essential", "Open"]); assert.deepEqual(merged.moods, ["Warm"]); assert.deepEqual(merged.styles, ["Blues"]);
+  assert.equal((await store.get(source.id))?.workflowStatus, "rejected"); assert.deepEqual((await store.list("published")).map((record) => record.id), [cRecord.id]);
+  await mf.dispose();
+});
+
+test("approve after duplicate resolution leaves one public chord", async () => {
+  const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" }); await store.reject(cRecord.id);
+  const candidate = { ...cRecord, id: "approved-c", workflowStatus: "pre-reviewed" as const };
+  const duplicate = await store.findDuplicate(candidate); assert.equal(duplicate?.record.workflowStatus, "rejected");
+  const published = await store.replace(duplicate!.record.id, candidate, "admin@example.test");
+  assert.equal(published.workflowStatus, "published"); assert.deepEqual((await store.list("published")).map((record) => record.id), [candidate.id]);
+  await mf.dispose();
+});
+
 async function failingAuditDatabase(): Promise<{ mf: Miniflare; store: D1ChordStore }> { const setup = await database(); await setup.db.prepare("CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit_log BEGIN SELECT RAISE(ABORT, 'simulated audit failure'); END").run(); return setup; }
 
 test("publish transaction rolls back when audit insertion fails", async () => {
@@ -74,6 +116,16 @@ test("merge and rejection transactions roll back with their audit entry", async 
 test("import dry-run is non-mutating and retry is idempotent", async () => {
   const { mf, store } = await database(); const dry = await store.importRecords([cRecord], true); assert.equal(dry.inserted, 1); assert.equal(await store.get(cRecord.id), null);
   const first = await store.importRecords([cRecord], false); const retry = await store.importRecords([cRecord], false); assert.equal(first.inserted, 1); assert.equal(retry.skipped, 1); await mf.dispose();
+});
+
+test("hosted enrichment preview applies only approved fields", async () => {
+  const { mf, store } = await database(); await store.publish(cRecord);
+  const imported = { ...createChordExport([cRecord]).records[0], description: "Enriched", difficulty: 4, moods: ["Warm"], fretPositions: cRecord.fretPositions };
+  const preview = await store.previewEnrichment([imported]); assert.equal(preview.counts.update, 1);
+  const report = await store.applyEnrichment([imported], "admin@example.test"); assert.deepEqual(report.applied, { new: 0, updated: 1 });
+  const updated = await store.get(cRecord.id); assert.equal(updated?.description, "Enriched"); assert.equal(updated?.difficulty, 4); assert.deepEqual(updated?.moods, ["Warm"]);
+  assert.deepEqual(updated?.fretPositions, cRecord.fretPositions); assert.deepEqual(updated?.tuning, cRecord.tuning); assert.equal(updated?.workflowStatus, cRecord.workflowStatus); assert.deepEqual(updated?.provenance, cRecord.provenance);
+  await mf.dispose();
 });
 
 test("hosted review import posts pre-reviewed records with the current Access session", async () => {
@@ -134,6 +186,8 @@ test("review route and every admin endpoint reject unauthenticated requests", as
   assert.equal((await handleApi(new Request("https://example.test/api/admin/audit"), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/export?format=json"), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/import", { method: "POST", body: JSON.stringify({ records: [] }) }), env, unauthenticated)).status, 401);
+  assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/enrichment/preview", { method: "POST", body: JSON.stringify({ records: [] }) }), env, unauthenticated)).status, 401);
+  assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/enrichment/apply", { method: "POST", body: JSON.stringify({ records: [] }) }), env, unauthenticated)).status, 401);
   assert.equal((await handleApi(new Request("https://example.test/api/admin/chords/x/reject", { method: "POST" }), env, unauthenticated)).status, 401);
   await mf.dispose();
 });

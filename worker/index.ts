@@ -92,6 +92,10 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     if (request.method === "GET" && path === "/api/admin/audit") return json({ entries: await store.auditLog() });
     if (request.method === "GET" && path === "/api/admin/quarantine") return json({ records: await store.quarantine() });
     if (request.method === "GET" && path === "/api/admin/backups") return json({ records: [...await store.list("pre-reviewed"), ...await store.list("published"), ...await store.list("rejected")] });
+    if (request.method === "POST" && path === "/api/admin/chords/enrichment/preview") {
+      const value = await body(request) as { records?: unknown[] };
+      return json({ preview: await store.previewEnrichment(Array.isArray(value.records) ? value.records : []) });
+    }
     const operation = path.match(/^\/api\/admin\/chords\/([^/]+)\/(pre-review|publish|reject|replace|merge|edit)$/);
     if (operation?.[2] === "edit" && request.method === "POST" && editorialEnabled(env)) {
       const id = decodeURIComponent(operation[1]);
@@ -101,6 +105,13 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     if (request.method === "POST" && path === "/api/admin/chords/import") {
       const value = await body(request) as { records?: unknown[]; dryRun?: boolean };
       return json({ report: await store.importRecords(Array.isArray(value.records) ? value.records : [], value.dryRun === true, principal.email) });
+    }
+    if (request.method === "POST" && path === "/api/admin/chords/enrichment/apply") {
+      const value = await body(request) as { records?: unknown[] };
+      return json({ report: await store.applyEnrichment(Array.isArray(value.records) ? value.records : [], principal.email) });
+    }
+    if (request.method === "POST" && path === "/api/admin/chords/duplicate") {
+      return json({ duplicate: await store.findDuplicate(await body(request)) });
     }
     if (!operation || request.method !== "POST") return json({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed." } }, 405);
     const id = decodeURIComponent(operation[1]); const action = operation[2];

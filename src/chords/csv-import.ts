@@ -27,5 +27,17 @@ export function importRecordCandidate(raw: Record<string, unknown>, index: numbe
   const parsed = safeParseJson(raw.recordJson);
   if (!parsed.ok) throw new Error(`Row ${index + 1}: recordJson ${parsed.issues[0].message}`);
   if (typeof parsed.value !== "object" || parsed.value === null || Array.isArray(parsed.value)) throw new Error(`Row ${index + 1}: recordJson must contain a chord record object`);
-  return parsed.value as Record<string, unknown>;
+  const candidate = { ...(parsed.value as Record<string, unknown>) };
+  const jsonFields = ["tuning", "fretPositions", "fingerPositions", "notes", "intervals", "tags", "moods", "styles", "relatedChords", "catalog", "provenance"];
+  for (const field of jsonFields) {
+    const source = raw[field]; if (typeof source !== "string") continue;
+    if (!source.trim()) { if (field === "fingerPositions" || field === "relatedChords") delete candidate[field]; continue; }
+    const result = safeParseJson(source); if (!result.ok) throw new Error(`Row ${index + 1}: ${field} ${result.issues[0].message}`); candidate[field] = result.value;
+  }
+  for (const field of ["id", "chordName", "correctedName", "root", "recipeId", "quality", "description", "workflowStatus"]) {
+    if (typeof raw[field] === "string") candidate[field] = raw[field];
+  }
+  if (typeof raw.schemaVersion === "string" && raw.schemaVersion.trim()) candidate.schemaVersion = Number(raw.schemaVersion);
+  if (typeof raw.difficulty === "string" && raw.difficulty.trim()) candidate.difficulty = Number(raw.difficulty);
+  return candidate;
 }

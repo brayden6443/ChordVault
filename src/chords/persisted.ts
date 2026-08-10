@@ -39,6 +39,7 @@ export interface PersistedChordRecordV1 {
   workflowStatus: PersistedWorkflowStatus;
   catalog?: PersistedCatalogMetadata;
   provenance: { source: string };
+  relatedChords?: string[];
 }
 
 export interface ValidationIssue { path: string; message: string }
@@ -97,6 +98,7 @@ export function validatePersistedChord(value: unknown): ValidationResult<Persist
   if (typeof value.workflowStatus !== "string" || !WORKFLOW_STATUSES.has(value.workflowStatus as PersistedWorkflowStatus)) issues.push({ path: "workflowStatus", message: "must be pending, pre-reviewed, published, or rejected" });
   if (!isObject(value.provenance)) issues.push({ path: "provenance", message: "must be an object" });
   else validateString(value.provenance.source, "provenance.source", issues);
+  if (value.relatedChords !== undefined && (!Array.isArray(value.relatedChords) || value.relatedChords.some((item) => typeof item !== "string" || item.trim() === ""))) issues.push({ path: "relatedChords", message: "must be an array of non-empty strings" });
   if (value.catalog !== undefined) {
     if (!isObject(value.catalog)) issues.push({ path: "catalog", message: "must be an object" });
     else {

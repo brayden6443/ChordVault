@@ -9,6 +9,7 @@ export interface AiEnrichmentChordRecord extends PersistedChordRecordV1 {
   intervals: number[];
   bassNote: string;
   inversion: string;
+  relatedChords?: string[];
 }
 
 export interface ChordExportBundle {
@@ -20,7 +21,7 @@ export interface ChordExportBundle {
 const CSV_COLUMNS: Array<keyof AiEnrichmentChordRecord | "recordJson"> = [
   "schemaVersion", "id", "chordName", "slug", "root", "recipeId", "quality", "type",
   "tuning", "fretPositions", "fingerPositions", "notes", "intervals", "bassNote", "inversion",
-  "description", "tags", "moods", "styles", "difficulty", "workflowStatus", "catalog", "provenance", "recordJson",
+  "description", "tags", "moods", "styles", "difficulty", "relatedChords", "workflowStatus", "catalog", "provenance", "recordJson",
 ];
 
 function enrichmentRecord(record: PersistedChordRecordV1): AiEnrichmentChordRecord {

@@ -52,6 +52,11 @@
           <strong>Drop CSV or JSON</strong><span>or click to choose a file</span>
         </label>
         <p class="import-status" id="importStatus" role="status">No file imported.</p>
+        <div class="import-preview" id="importPreview" hidden>
+          <div class="import-preview-counts" id="importPreviewCounts"></div>
+          <ul class="import-preview-rows" id="importPreviewRows"></ul>
+          <button class="primary-button" id="applyImport" type="button">Apply import</button>
+        </div>
       </section>
 
       <section class="review-workspace" aria-live="polite">

@@ -1,6 +1,7 @@
 import { migrateChordRecords, type QuarantinedChord } from "./migration.ts";
 import { persistChordVoicing, type PersistedChordRecordV1 } from "./persisted.ts";
 import type { ChordVoicing } from "./types.ts";
+import type { EnrichmentPreview } from "./enrichment.ts";
 
 export interface PreparedHostedImport {
   backup: string;
@@ -29,5 +30,13 @@ export function preparedPreReviewedImport(voicings: ChordVoicing[]): PreparedHos
   const records = voicings.map((voicing) => persistChordVoicing(voicing, "pre-reviewed"));
   return { backup: JSON.stringify(records, null, 2), records, quarantine: [], report: { validated: records.length, skipped: 0, quarantined: 0, failed: 0, diagnostics: [] } };
 }
+
+async function enrichmentRequest<T>(apiBase: string, action: "preview" | "apply", records: unknown[], fetcher: typeof fetch = fetch): Promise<T> {
+  const response = await fetcher(`${apiBase.replace(/\/$/, "")}/admin/chords/enrichment/${action}`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ records }) });
+  const result = await response.json() as T; if (!response.ok) throw new Error(`Hosted enrichment ${action} was rejected.`); return result;
+}
+
+export function previewEnrichmentImport(apiBase: string, records: unknown[], fetcher?: typeof fetch): Promise<{ preview: EnrichmentPreview }> { return enrichmentRequest(apiBase, "preview", records, fetcher); }
+export function applyEnrichmentImport(apiBase: string, records: unknown[], fetcher?: typeof fetch): Promise<{ report: { preview: EnrichmentPreview; applied: { new: number; updated: number } } }> { return enrichmentRequest(apiBase, "apply", records, fetcher); }
 
 export async function backupThenUpload<T>(prepared: PreparedHostedImport, saveBackup: (contents: string) => Promise<void>, upload: () => Promise<T>): Promise<T> { await saveBackup(prepared.backup); return upload(); }

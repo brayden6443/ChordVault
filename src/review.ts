@@ -6,8 +6,9 @@ import { bassPitch, intervalLabel, intervalsRelativeToRoot, inversionForPitches,
 import { fretSpanFor } from "./chords/playability.ts";
 import { exactVoicingKey } from "./chords/identity.ts";
 import { createChordRepository, repositoryConfiguration } from "./chords/repository-composition.ts";
-import { preparedPreReviewedImport, uploadPreparedImport } from "./chords/hosted-import.ts";
-import { CHORD_SCHEMA_VERSION, hydratePersistedChord, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./chords/persisted.ts";
+import { applyEnrichmentImport, previewEnrichmentImport } from "./chords/hosted-import.ts";
+import { CHORD_SCHEMA_VERSION, hydratePersistedChord, persistChordVoicing, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./chords/persisted.ts";
+import type { EnrichmentPreview } from "./chords/enrichment.ts";
 import { generatorRecipes, recipeById, recipeIdFromChordName } from "./chords/recipes.ts";
 import { STANDARD_TUNING, type ApprovalStatus, type ChordVoicing } from "./chords/types.ts";
 import { MOOD_TAGS, STYLE_TAGS, STRUCTURAL_TAGS, normalizedDescriptorTags, normalizedMoodTags, normalizedStyleTags, type MoodTag, type StyleTag } from "./chords/tags.ts";
@@ -280,6 +281,16 @@ async function importApprovedFile(file: File): Promise<void> {
     if (json && !json.ok) throw new Error(json.issues[0].message);
     const parsed = file.name.toLowerCase().endsWith(".csv") ? parseCsvObjects(text) : json!.value as Record<string, unknown> | Record<string, unknown>[];
     const records = Array.isArray(parsed) ? parsed : Array.isArray(parsed.voicings) ? parsed.voicings : [parsed];
+    if (repositoryCapabilities.backend === "hosted") {
+      pendingImportRecords = records.map((raw, index) => {
+        try {
+          const candidate = importRecordCandidate(raw, index);
+          return "schemaVersion" in candidate ? candidate : persistChordVoicing(normalizeImportedVoicing(raw, index), "pre-reviewed");
+        } catch (error) { return { id: typeof raw.id === "string" ? raw.id : "", __importError: error instanceof Error ? error.message : `Row ${index + 1}: invalid record` }; }
+      });
+      const result = await previewEnrichmentImport(repositoryConfig.apiBase, pendingImportRecords);
+      renderImportPreview(result.preview); importStatus.textContent = `${file.name}: preview ready. Nothing has been written yet.`; return;
+    }
     const existingKeys = new Set(approvedVault.map(exactVoicingKey));
     let imported = 0; let duplicates = 0; let invalid = 0; const invalidReasons: string[] = [];
     for (let index = 0; index < records.length; index += 1) {
@@ -290,11 +301,7 @@ async function importApprovedFile(file: File): Promise<void> {
         existingKeys.add(key); approvedVault.push(voicing); imported += 1;
       } catch (error) { invalid += 1; invalidReasons.push(error instanceof Error ? error.message : `Row ${index + 1}: invalid record`); }
     }
-    if (repositoryCapabilities.backend === "hosted") {
-      await uploadPreparedImport(preparedPreReviewedImport(approvedVault), { apiBase: repositoryConfig.apiBase, dryRun: false });
-    } else {
-      chordRepository.importPreReviewed(approvedVault);
-    }
+    chordRepository.importPreReviewed(approvedVault);
     const reasonSummary = invalidReasons.length ? ` ${invalidReasons.slice(0, 5).join(" | ")}${invalidReasons.length > 5 ? ` | +${invalidReasons.length - 5} more` : ""}` : "";
     importStatus.textContent = `${file.name}: ${imported} imported to Pre-reviewed, ${duplicates} duplicate, ${invalid} invalid.${reasonSummary}`;
     renderLibraryEditor();
@@ -302,6 +309,29 @@ async function importApprovedFile(file: File): Promise<void> {
     importStatus.textContent = `Import failed: ${error instanceof Error ? error.message : "invalid file"}`;
   }
 }
+
+let pendingImportRecords: unknown[] = [];
+const importPreview = byId("importPreview");
+const importPreviewCounts = byId("importPreviewCounts");
+const importPreviewRows = byId("importPreviewRows");
+const applyImport = byId<HTMLButtonElement>("applyImport");
+function renderImportPreview(preview: EnrichmentPreview): void {
+  importPreview.hidden = false;
+  importPreviewCounts.innerHTML = Object.entries(preview.counts).map(([label, count]) => `<span>${escapeHtml(label)}: ${count}</span>`).join("");
+  const notable = preview.rows.filter((row) => row.classification !== "unchanged");
+  importPreviewRows.innerHTML = notable.length ? notable.map((row) => `<li><strong>${escapeHtml(row.classification)}</strong> ${escapeHtml(row.id || `Row ${row.index + 1}`)}${row.changedFields.length ? ` - ${escapeHtml(row.changedFields.join(", "))}` : ""}${row.reasons.length ? ` - ${escapeHtml(row.reasons.join("; "))}` : ""}</li>`).join("") : "<li>Every record is unchanged.</li>";
+  applyImport.disabled = preview.counts.new + preview.counts.update === 0;
+  applyImport.textContent = `Apply ${preview.counts.new + preview.counts.update} changes`;
+}
+
+applyImport.addEventListener("click", async () => {
+  applyImport.disabled = true; const importStatus = byId("importStatus"); importStatus.textContent = "Applying approved import changes...";
+  try {
+    const result = await applyEnrichmentImport(repositoryConfig.apiBase, pendingImportRecords); renderImportPreview(result.report.preview);
+    importStatus.textContent = `Applied ${result.report.applied.new} new chord${result.report.applied.new === 1 ? "" : "s"} and ${result.report.applied.updated} enrichment update${result.report.applied.updated === 1 ? "" : "s"}. Conflicts and invalid rows were not changed.`;
+    pendingImportRecords = [];
+  } catch (error) { importStatus.textContent = `Import failed: ${error instanceof Error ? error.message : "hosted import failed"}`; applyImport.disabled = false; }
+});
 
 const importFile = byId<HTMLInputElement>("importFile");
 const importDropZone = byId("importDropZone");
@@ -535,13 +565,31 @@ function duplicateCard(label: string, voicing: ChordVoicing): string {
 }
 
 const duplicateDialog = byId<HTMLDialogElement>("duplicateDialog");
-let pendingDuplicatePublish: (() => void) | null = null;
-let pendingDuplicatePair: { candidate: ChordVoicing; match: ChordVoicing } | null = null;
-function requestPublish(candidate: ChordVoicing, publish: () => void): void {
-  const duplicate = findVoicingDuplicate(candidate, mainVaultVoicings());
-  if (!duplicate) { publish(); return; }
+let pendingDuplicatePublish: (() => Promise<void>) | null = null;
+let pendingDuplicatePair: { candidate: ChordVoicing; match: ChordVoicing; status: PersistedChordRecordV1["workflowStatus"] } | null = null;
+
+async function adminChordRequest(path: string, value: unknown): Promise<PersistedChordRecordV1> {
+  const response = await fetch(path, { method: "POST", credentials: "same-origin", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(value) });
+  const payload = await response.json() as { record?: PersistedChordRecordV1; error?: { message?: string } };
+  if (!response.ok || !payload.record) throw new Error(payload.error?.message ?? `Request failed with status ${response.status}`);
+  return payload.record;
+}
+
+async function hostedDuplicate(candidate: ChordVoicing): Promise<{ match: ChordVoicing; similarity: number; exact: boolean; status: PersistedChordRecordV1["workflowStatus"] } | null> {
+  const response = await fetch("/api/admin/chords/duplicate", { method: "POST", credentials: "same-origin", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(persistChordVoicing(candidate, "pre-reviewed")) });
+  const payload = await response.json() as { duplicate?: { record: PersistedChordRecordV1; similarity: number; exact: boolean } | null; error?: { message?: string } };
+  if (!response.ok) throw new Error(payload.error?.message ?? `Duplicate check failed with status ${response.status}`);
+  return payload.duplicate ? { match: hydratePersistedChord(payload.duplicate.record), similarity: payload.duplicate.similarity, exact: payload.duplicate.exact, status: payload.duplicate.record.workflowStatus } : null;
+}
+
+async function requestPublish(candidate: ChordVoicing, publish: () => Promise<void>): Promise<void> {
+  const localDuplicate = findVoicingDuplicate(candidate, mainVaultVoicings());
+  const duplicate = repositoryCapabilities.backend === "hosted"
+    ? await hostedDuplicate(candidate)
+    : localDuplicate ? { ...localDuplicate, status: "published" as const } : null;
+  if (!duplicate) { await publish(); return; }
   pendingDuplicatePublish = publish;
-  pendingDuplicatePair = { candidate, match: duplicate.match };
+  pendingDuplicatePair = { candidate, match: duplicate.match, status: duplicate.status };
   byId("duplicateSummary").textContent = duplicate.exact
     ? "These fret positions already exist in the Main Vault. Compare them before continuing."
     : `This voicing is ${duplicate.similarity}% similar to one in the Main Vault. Compare them before continuing.`;
@@ -551,9 +599,19 @@ function requestPublish(candidate: ChordVoicing, publish: () => void): void {
 
 function closeDuplicateDialog(): void { pendingDuplicatePublish = null; pendingDuplicatePair = null; duplicateDialog.close(); }
 byId("closeDuplicate").addEventListener("click", closeDuplicateDialog);
-byId("keepExisting").addEventListener("click", closeDuplicateDialog);
-byId("publishDuplicate").addEventListener("click", () => { const publish = pendingDuplicatePublish; pendingDuplicatePublish = null; duplicateDialog.close(); publish?.(); });
-byId("mergeDuplicate").addEventListener("click", () => {
+byId("keepExisting").addEventListener("click", async () => {
+  const pair = pendingDuplicatePair;
+  try {
+    if (pair && repositoryCapabilities.backend === "hosted" && pair.status !== "published") {
+      const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(pair.match.id)}/publish`, persistChordVoicing(pair.match, "published"));
+      publishedVault = [...publishedVault.filter((item) => item.id !== pair.match.id), hydratePersistedChord(record)];
+      batchStatus.textContent = `${pair.match.chordName} was restored to the Main Vault.`;
+    }
+    closeDuplicateDialog(); renderLibraryEditor(); renderCoverage();
+  } catch (error) { batchStatus.textContent = error instanceof Error ? error.message : "Could not resolve duplicate."; }
+});
+byId("publishDuplicate").addEventListener("click", () => { const publish = pendingDuplicatePublish; pendingDuplicatePublish = null; duplicateDialog.close(); void publish?.(); });
+byId("mergeDuplicate").addEventListener("click", async () => {
   const pair = pendingDuplicatePair; if (!pair) return;
   const mergedTags = [...new Set([...(pair.match.descriptorTags ?? []), ...(pair.candidate.descriptorTags ?? [])])];
   const mergedMoods = [...new Set([...pair.match.moodTags, ...pair.candidate.moodTags])];
@@ -561,15 +619,30 @@ byId("mergeDuplicate").addEventListener("click", () => {
   const published = publishedVault.find((item) => item.id === pair.match.id);
   if (published) { published.descriptorTags = mergedTags; published.moodTags = mergedMoods; published.genreTags = mergedStyles; published.description ||= pair.candidate.description; }
   else libraryEdits[pair.match.id] = { ...libraryEdits[pair.match.id], descriptorTags: mergedTags, moods: mergedMoods, styles: mergedStyles };
-  chordRepository.mergeVoicings(pair.match.id, pair.candidate);
-  audit("Merged duplicate metadata", pair.candidate.chordName); closeDuplicateDialog(); renderLibraryEditor();
+  try {
+    if (repositoryCapabilities.backend === "hosted") {
+      const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(pair.match.id)}/merge`, persistChordVoicing(pair.candidate, "pre-reviewed"));
+      publishedVault = [...publishedVault.filter((item) => item.id !== pair.match.id), hydratePersistedChord(record)];
+      approvedVault = approvedVault.filter((item) => item.id !== pair.candidate.id);
+    } else chordRepository.mergeVoicings(pair.match.id, pair.candidate);
+    audit("Merged duplicate metadata", pair.candidate.chordName); closeDuplicateDialog(); renderLibraryEditor(); renderCoverage();
+  } catch (error) { batchStatus.textContent = error instanceof Error ? error.message : "Could not merge duplicate."; }
 });
-byId("replaceDuplicate").addEventListener("click", () => {
+byId("replaceDuplicate").addEventListener("click", async () => {
   const pair = pendingDuplicatePair; const publish = pendingDuplicatePublish; if (!pair || !publish) return;
-  publishedVault = publishedVault.filter((item) => item.id !== pair.match.id); finalApprovedKeys.delete(pair.match.id);
-  const publicMatch = publicLibrary.find((item) => item.key === pair.match.id); if (publicMatch) publicMatch.source = "Unapproved";
-  chordRepository.replacePublishedVoicing(pair.match.id, pair.candidate);
-  pendingDuplicatePublish = null; pendingDuplicatePair = null; duplicateDialog.close(); publish(); audit("Replaced duplicate", pair.candidate.chordName);
+  try {
+    if (repositoryCapabilities.backend === "hosted") {
+      const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(pair.match.id)}/replace`, persistChordVoicing(pair.candidate, "published"));
+      publishedVault = [...publishedVault.filter((item) => item.id !== pair.match.id && item.id !== pair.candidate.id), hydratePersistedChord(record)];
+      approvedVault = approvedVault.filter((item) => item.id !== pair.candidate.id);
+      finalApprovedKeys.delete(pair.match.id); finalApprovedKeys.add(pair.candidate.id);
+    } else { chordRepository.replacePublishedVoicing(pair.match.id, pair.candidate); await publish(); }
+    pendingDuplicatePublish = null; pendingDuplicatePair = null; duplicateDialog.close(); audit("Replaced duplicate", pair.candidate.chordName); renderLibraryEditor(); renderCoverage();
+  } catch (error) {
+    if (error instanceof Error && /not found/i.test(error.message) && repositoryCapabilities.backend === "hosted") {
+      closeDuplicateDialog(); await publish();
+    } else batchStatus.textContent = error instanceof Error ? error.message : "Could not replace duplicate.";
+  }
 });
 duplicateDialog.addEventListener("cancel", () => { pendingDuplicatePublish = null; });
 
@@ -660,14 +733,17 @@ libraryGrid.addEventListener("click", (event) => {
   if (button.classList.contains("final-approve-button")) {
     if (item.source === "Unapproved") {
       const candidate = libraryItemVoicing(editedLibraryItem(item));
-      requestPublish(candidate, () => {
+      void requestPublish(candidate, async () => {
+        if (repositoryCapabilities.backend === "hosted") {
+          const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(candidate.id)}/publish`, persistChordVoicing(candidate, "published"));
+          publishedVault = [...publishedVault.filter((published) => published.id !== candidate.id), hydratePersistedChord(record)];
+        } else chordRepository.approvePublicVoicing(item.key);
         finalApprovedKeys.add(item.key);
-        chordRepository.approvePublicVoicing(item.key);
         const stored = publicLibrary.find((publicItem) => publicItem.key === item.key);
         if (stored) stored.source = "Main Vault";
         batchStatus.textContent = `${item.name} was moved to the Main Vault. Refresh the public page to view it.`;
         audit("Final approved", item.name); renderLibraryEditor(); renderCoverage();
-      });
+      }).catch((error: unknown) => { batchStatus.textContent = error instanceof Error ? error.message : "Could not publish chord."; });
       return;
     }
     const voicing = approvedVault.find((approved) => approved.id === item.key);
@@ -677,15 +753,19 @@ libraryGrid.addEventListener("click", (event) => {
     voicing.descriptorTags = edited.descriptorTags;
     voicing.moodTags = edited.moods;
     voicing.genreTags = edited.styles;
-    requestPublish(voicing, () => {
-      voicing.approvalStatus = "approved";
-      publishedVault = [...publishedVault.filter((published) => published.id !== voicing.id), voicing];
-      finalApprovedKeys.add(voicing.id);
-      approvedVault = approvedVault.filter((approved) => approved.id !== voicing.id);
-      chordRepository.publishVoicing(voicing);
-      batchStatus.textContent = `${voicing.chordName} was published to the Main Vault. Refresh the public page to view it.`;
-      audit("Final approved", voicing.chordName); renderLibraryEditor(); renderCoverage();
-    });
+    void requestPublish(voicing, async () => {
+      let publishedVoicing = voicing;
+      if (repositoryCapabilities.backend === "hosted") {
+        const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(voicing.id)}/publish`, persistChordVoicing(voicing, "published"));
+        publishedVoicing = hydratePersistedChord(record);
+      } else chordRepository.publishVoicing(voicing);
+      publishedVoicing.approvalStatus = "approved";
+      publishedVault = [...publishedVault.filter((published) => published.id !== publishedVoicing.id), publishedVoicing];
+      finalApprovedKeys.add(publishedVoicing.id);
+      approvedVault = approvedVault.filter((approved) => approved.id !== publishedVoicing.id);
+      batchStatus.textContent = `${publishedVoicing.chordName} was published to the Main Vault. Refresh the public page to view it.`;
+      audit("Final approved", publishedVoicing.chordName); renderLibraryEditor(); renderCoverage();
+    }).catch((error: unknown) => { batchStatus.textContent = error instanceof Error ? error.message : "Could not publish chord."; });
   }
 });
 
