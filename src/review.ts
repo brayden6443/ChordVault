@@ -6,7 +6,7 @@ import { bassPitch, intervalLabel, intervalsRelativeToRoot, inversionForPitches,
 import { fretSpanFor } from "./chords/playability.ts";
 import { exactVoicingKey } from "./chords/identity.ts";
 import { createChordRepository, repositoryConfiguration } from "./chords/repository-composition.ts";
-import { loadHostedAdminWorkspace } from "./chords/hosted-repository.ts";
+import { HostedReviewClient, type HostedReviewWorkspace } from "./chords/hosted-review-client.ts";
 import { applyEnrichmentImport, previewEnrichmentImport } from "./chords/hosted-import.ts";
 import { CHORD_SCHEMA_VERSION, hydratePersistedChord, persistChordVoicing, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./chords/persisted.ts";
 import type { EnrichmentPreview } from "./chords/enrichment.ts";
@@ -20,28 +20,49 @@ const RECIPES = generatorRecipes();
 const repositoryConfig = repositoryConfiguration(import.meta.env);
 const { repository: chordRepository, capabilities: repositoryCapabilities } = await createChordRepository({ localStorage, sessionStorage, env: import.meta.env });
 const initialWorkspace = chordRepository.loadWorkspace();
+const hostedReview = repositoryCapabilities.backend === "hosted" ? new HostedReviewClient(repositoryConfig.apiBase) : null;
 
-const savedReviews = initialWorkspace.savedReviews;
-let approvedVault = initialWorkspace.preReviewed;
-let publishedVault = initialWorkspace.published;
+const savedReviews = repositoryCapabilities.backend === "hosted" ? {} : initialWorkspace.savedReviews;
+let approvedVault: ChordVoicing[] = repositoryCapabilities.backend === "hosted" ? [] : initialWorkspace.preReviewed;
+let publishedVault: ChordVoicing[] = repositoryCapabilities.backend === "hosted" ? [] : initialWorkspace.published;
+let rejectedVault: ChordVoicing[] = [];
+let hostedWorkspace: HostedReviewWorkspace | null = null;
 let hostedWorkspaceLoadError = "";
 if (repositoryCapabilities.backend === "hosted") {
   try {
-    const hostedWorkspace = await loadHostedAdminWorkspace(repositoryConfig.apiBase);
-    approvedVault = hostedWorkspace.preReviewed; publishedVault = hostedWorkspace.published;
+    hostedWorkspace = await hostedReview!.loadWorkspace();
+    approvedVault = hostedWorkspace.preReviewed; publishedVault = hostedWorkspace.published; rejectedVault = hostedWorkspace.rejected;
   } catch (error) { hostedWorkspaceLoadError = error instanceof Error ? error.message : "Hosted administrator records could not be loaded."; }
 }
 interface LibraryItem { key: string; name: string; root?: string; chordQuality?: string; difficulty: number; descriptorTags: string[]; moods: MoodTag[]; styles: StyleTag[]; frets?: number[]; fingers?: string[]; source: "Main Vault" | "Pre-reviewed" | "Unapproved"; }
-const finalApprovedKeys = new Set<string>(publishedVault.map((record) => record.id));
+let finalApprovedKeys = new Set<string>(publishedVault.map((record) => record.id));
 const fallbackPublicLibrary: LibraryItem[] = CANONICAL_VOICINGS.map((voicing) => ({
   key: voicing.id, name: voicing.chordName, root: voicing.root, chordQuality: voicing.chordQuality, difficulty: voicing.difficulty, source: "Main Vault",
   frets: voicing.fretPositions.map((fret) => fret ?? -1), fingers: (voicing.fingerPositions ?? []).map((finger) => finger ? String(finger) : ""),
   descriptorTags: [voicing.displayPriority === 1 ? "Essential" : "", voicing.category === "Essential Open" ? "Open" : "Barre", voicing.movable ? "Movable" : ""].filter(Boolean),
   moods: [], styles: [],
 }));
-const publicLibrary: LibraryItem[] = (initialWorkspace.publicLibrary ?? fallbackPublicLibrary)
+let publicLibrary: LibraryItem[] = (repositoryCapabilities.backend === "hosted" ? publishedVault.map((voicing) => ({
+  key: voicing.id, name: voicing.chordName, root: voicing.root, chordQuality: voicing.chordQuality, difficulty: voicing.difficulty, source: "Main Vault" as const,
+  frets: voicing.fretPositions.map((fret) => fret ?? -1), fingers: (voicing.fingerPositions ?? []).map((finger) => finger ? String(finger) : ""),
+  descriptorTags: voicing.descriptorTags ?? [], moods: voicing.moodTags, styles: voicing.genreTags,
+})) : (initialWorkspace.publicLibrary ?? fallbackPublicLibrary))
   .map((item) => ({ ...item, moods: normalizedMoodTags(item.moods ?? item.descriptorTags), styles: normalizedStyleTags(item.styles ?? item.descriptorTags), descriptorTags: normalizedDescriptorTags(item.descriptorTags), source: finalApprovedKeys.has(item.key) ? "Main Vault" : "Unapproved" }));
-const libraryEdits = initialWorkspace.libraryEdits;
+const libraryEdits = repositoryCapabilities.backend === "hosted" ? {} : initialWorkspace.libraryEdits;
+
+async function refreshHostedWorkspace(): Promise<void> {
+  if (!hostedReview) return;
+  hostedWorkspace = await hostedReview.loadWorkspace();
+  approvedVault = hostedWorkspace.preReviewed;
+  publishedVault = hostedWorkspace.published;
+  rejectedVault = hostedWorkspace.rejected;
+  finalApprovedKeys = new Set(publishedVault.map((record) => record.id));
+  publicLibrary = publishedVault.map((voicing) => ({
+    key: voicing.id, name: voicing.chordName, root: voicing.root, chordQuality: voicing.chordQuality, difficulty: voicing.difficulty, source: "Main Vault",
+    frets: voicing.fretPositions.map((fret) => fret ?? -1), fingers: (voicing.fingerPositions ?? []).map((finger) => finger ? String(finger) : ""),
+    descriptorTags: normalizedDescriptorTags(voicing.descriptorTags ?? []), moods: normalizedMoodTags(voicing.moodTags), styles: normalizedStyleTags(voicing.genreTags),
+  }));
+}
 function migrateLegacyTags(): void {
   const migrateVoicing = (voicing: ChordVoicing) => {
     const legacy = voicing.descriptorTags ?? [];
@@ -60,10 +81,10 @@ if (repositoryCapabilities.mutations) migrateLegacyTags();
 let activeLibrarySource = "All";
 let libraryPage = 0;
 let candidates: ChordVoicing[] = [];
-let currentIndex = initialWorkspace.reviewIndex;
-const rejectedShapes = new Set<string>(initialWorkspace.rejectedShapes);
+let currentIndex = repositoryCapabilities.backend === "hosted" ? 0 : initialWorkspace.reviewIndex;
+const rejectedShapes = new Set<string>(repositoryCapabilities.backend === "hosted" ? [] : initialWorkspace.rejectedShapes);
 const reviewLater = new Set<string>(initialWorkspace.reviewLater);
-const auditLog = initialWorkspace.auditLog;
+const auditLog = repositoryCapabilities.backend === "hosted" ? [] : initialWorkspace.auditLog;
 const selectedLibraryKeys = new Set<string>();
 let undoAction: (() => void) | null = null;
 let audioContext: AudioContext | null = null;
@@ -78,12 +99,13 @@ const batchStatus = byId<HTMLElement>("batchStatus");
 if (!repositoryCapabilities.mutations) batchStatus.textContent = "This browser workspace remains read-only for hosted records. Authorized hosted changes use the protected administrator API.";
 if (hostedWorkspaceLoadError) batchStatus.textContent = hostedWorkspaceLoadError;
 
-candidates = initialWorkspace.candidates;
+candidates = repositoryCapabilities.backend === "hosted" ? [] : initialWorkspace.candidates;
 
 function persistQueue(): void {
-  chordRepository.saveCandidateQueue(candidates, currentIndex);
+  if (repositoryCapabilities.backend !== "hosted") chordRepository.saveCandidateQueue(candidates, currentIndex);
 }
 function audit(action: string, chord: string): void {
+  if (repositoryCapabilities.backend === "hosted") { batchStatus.textContent ||= `${action}: ${chord}`; return; }
   auditLog.unshift({ at: new Date().toISOString(), action, chord }); auditLog.splice(100);
   chordRepository.appendAuditEntry(auditLog[0]); void chordRepository.mirrorWorkspace(); renderAudit();
 }
@@ -138,7 +160,10 @@ function diagram(voicing: ChordVoicing): string {
 
 function updateCounts(): void {
   for (const status of ["pending", "approved", "rejected"] as ApprovalStatus[]) {
-    byId(`${status}Count`).textContent = String(candidates.filter((candidate) => candidate.approvalStatus === status).length);
+    const count = hostedReview && status === "approved" ? approvedVault.length
+      : hostedReview && status === "rejected" ? rejectedVault.length
+        : candidates.filter((candidate) => candidate.approvalStatus === status).length;
+    byId(`${status}Count`).textContent = String(count);
   }
   byId("positionCount").textContent = candidates.length ? `${currentIndex + 1} / ${candidates.length}` : "0 / 0";
 }
@@ -191,17 +216,19 @@ function render(): void {
     voicing.description = byId<HTMLTextAreaElement>("editDescription").value.trim();
     saveCurrent(voicing); render();
   });
-  reviewCard.querySelectorAll<HTMLButtonElement>("[data-status]").forEach((button) => button.addEventListener("click", () => {
+  reviewCard.querySelectorAll<HTMLButtonElement>("[data-status]").forEach((button) => button.addEventListener("click", async () => {
     if (button.dataset.status === "rejected") {
       const removed = voicing;
-      rejectedShapes.add(exactVoicingKey(voicing)); chordRepository.rejectVoicing(voicing);
+      if (hostedReview && hostedWorkspace?.records.some((record) => record.id === voicing.id)) {
+        await hostedReview.reject(voicing.id); await refreshHostedWorkspace();
+      } else if (!hostedReview) { rejectedShapes.add(exactVoicingKey(voicing)); chordRepository.rejectVoicing(voicing); }
       delete savedReviews[voicing.id];
-      approvedVault = approvedVault.filter((approved) => approved.id !== voicing.id);
+      if (!hostedReview) approvedVault = approvedVault.filter((approved) => approved.id !== voicing.id);
       candidates.splice(currentIndex, 1);
       currentIndex = Math.min(currentIndex, Math.max(0, candidates.length - 1));
       batchStatus.textContent = `${voicing.chordName} was rejected and deleted from the review queue.`;
       audit("Rejected permanently", voicing.chordName); persistQueue();
-      setUndo(() => { rejectedShapes.delete(exactVoicingKey(removed)); candidates.splice(currentIndex, 0, removed); chordRepository.restoreRejectedVoicing(removed); persistQueue(); render(); });
+      if (!hostedReview) setUndo(() => { rejectedShapes.delete(exactVoicingKey(removed)); candidates.splice(currentIndex, 0, removed); chordRepository.restoreRejectedVoicing(removed); persistQueue(); render(); });
       render();
       return;
     }
@@ -209,12 +236,12 @@ function render(): void {
       const guard = canApproveVoicing(voicing, [...CANONICAL_VOICINGS, ...approvedVault]);
       if (!guard.allowed) { batchStatus.textContent = guard.reason!; candidates.splice(currentIndex, 1); currentIndex = Math.min(currentIndex, candidates.length - 1); render(); return; }
     }
-    voicing.approvalStatus = button.dataset.status as ApprovalStatus;
-    if (voicing.approvalStatus === "approved") {
-      approvedVault = [...approvedVault.filter((approved) => approved.id !== voicing.id), voicing];
-      chordRepository.moveToPreReviewed(voicing);
+    if (!hostedReview) voicing.approvalStatus = button.dataset.status as ApprovalStatus;
+    if (button.dataset.status === "approved") {
+      if (hostedReview) { await hostedReview.preReview(voicing); await refreshHostedWorkspace(); }
+      else { approvedVault = [...approvedVault.filter((approved) => approved.id !== voicing.id), voicing]; chordRepository.moveToPreReviewed(voicing); }
     }
-    saveCurrent(voicing); advance(1);
+    if (!hostedReview) saveCurrent(voicing); advance(1);
     audit("Moved to Pre-reviewed", voicing.chordName); persistQueue();
   }));
   byId("reviewLaterCandidate").addEventListener("click", () => { reviewLater.add(voicing.id); chordRepository.markReviewLater([voicing.id]); audit("Saved for later", voicing.chordName); advance(1); });
@@ -337,6 +364,7 @@ applyImport.addEventListener("click", async () => {
   applyImport.disabled = true; const importStatus = byId("importStatus"); importStatus.textContent = "Applying approved import changes...";
   try {
     const result = await applyEnrichmentImport(repositoryConfig.apiBase, pendingImportRecords); renderImportPreview(result.report.preview);
+    if (hostedReview) { await refreshHostedWorkspace(); renderLibraryEditor(); renderCoverage(); }
     importStatus.textContent = `Applied ${result.report.applied.new} new chord${result.report.applied.new === 1 ? "" : "s"} and ${result.report.applied.updated} enrichment update${result.report.applied.updated === 1 ? "" : "s"}. Conflicts and invalid rows were not changed.`;
     pendingImportRecords = [];
   } catch (error) { importStatus.textContent = `Import failed: ${error instanceof Error ? error.message : "hosted import failed"}`; applyImport.disabled = false; }
@@ -482,7 +510,7 @@ function tagVocabulary(): string[] {
 
 function persistLibraryEdit(item: LibraryItem, update: { difficulty?: number; descriptorTags?: string[]; moods?: MoodTag[]; styles?: StyleTag[] }): void {
   libraryEdits[item.key] = { ...libraryEdits[item.key], ...update };
-  chordRepository.updateEditorialFields(item.key, update);
+  if (!hostedReview) chordRepository.updateEditorialFields(item.key, update);
   const approved = approvedVault.find((voicing) => voicing.id === item.key);
   if (approved) {
     if (update.difficulty !== undefined) approved.difficulty = update.difficulty as 1 | 2 | 3 | 4 | 5;
@@ -500,20 +528,15 @@ async function saveLibraryEdit(item: LibraryItem, card: HTMLElement): Promise<vo
   status.textContent = "Saving...";
   try {
     const edited = editedLibraryItem(item);
-    if (item.source === "Main Vault") {
-      const response = await fetch(`/api/admin/chords/${encodeURIComponent(item.key)}/edit`, {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ difficulty: edited.difficulty, tags: edited.descriptorTags, moods: edited.moods, styles: edited.styles }),
-      });
-      if (!response.ok) throw new Error(`Save failed with status ${response.status}`);
-      const published = publishedVault.find((voicing) => voicing.id === item.key);
-      if (published) {
-        published.difficulty = edited.difficulty as 1 | 2 | 3 | 4 | 5;
-        published.descriptorTags = [...edited.descriptorTags];
-        published.moodTags = [...edited.moods];
-        published.genreTags = [...edited.styles];
-      }
+    const changes = { difficulty: edited.difficulty, tags: edited.descriptorTags, moods: edited.moods, styles: edited.styles };
+    if (hostedReview) {
+      if (item.source === "Main Vault") await hostedReview.edit(item.key, changes);
+      else await hostedReview.editPreReviewed(item.key, changes);
+      delete libraryEdits[item.key];
+      await refreshHostedWorkspace();
+      status.textContent = item.source === "Main Vault" ? "Saved to Main Vault" : "Saved to Pre-reviewed";
+      renderLibraryEditor(); renderCoverage();
+    } else if (item.source === "Main Vault") {
       status.textContent = "Saved to Main Vault";
     } else {
       status.textContent = "Saved in workspace";
@@ -560,6 +583,7 @@ function libraryItemVoicing(item: LibraryItem): ChordVoicing {
 }
 
 function mainVaultVoicings(): ChordVoicing[] {
+  if (hostedReview) return [...publishedVault];
   const items = publicLibrary.filter((item) => finalApprovedKeys.has(item.key)).map((item) =>
     CANONICAL_VOICINGS.find((voicing) => voicing.id === item.key) ?? libraryItemVoicing(editedLibraryItem(item)));
   return [...items, ...publishedVault];
@@ -576,13 +600,6 @@ function duplicateCard(label: string, voicing: ChordVoicing): string {
 const duplicateDialog = byId<HTMLDialogElement>("duplicateDialog");
 let pendingDuplicatePublish: (() => Promise<void>) | null = null;
 let pendingDuplicatePair: { candidate: ChordVoicing; match: ChordVoicing; status: PersistedChordRecordV1["workflowStatus"] } | null = null;
-
-async function adminChordRequest(path: string, value: unknown): Promise<PersistedChordRecordV1> {
-  const response = await fetch(path, { method: "POST", credentials: "same-origin", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(value) });
-  const payload = await response.json() as { record?: PersistedChordRecordV1; error?: { message?: string } };
-  if (!response.ok || !payload.record) throw new Error(payload.error?.message ?? `Request failed with status ${response.status}`);
-  return payload.record;
-}
 
 async function hostedDuplicate(candidate: ChordVoicing): Promise<{ match: ChordVoicing; similarity: number; exact: boolean; status: PersistedChordRecordV1["workflowStatus"] } | null> {
   const response = await fetch("/api/admin/chords/duplicate", { method: "POST", credentials: "same-origin", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(persistChordVoicing(candidate, "pre-reviewed")) });
@@ -611,9 +628,9 @@ byId("closeDuplicate").addEventListener("click", closeDuplicateDialog);
 byId("keepExisting").addEventListener("click", async () => {
   const pair = pendingDuplicatePair;
   try {
-    if (pair && repositoryCapabilities.backend === "hosted" && pair.status !== "published") {
-      const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(pair.match.id)}/publish`, persistChordVoicing(pair.match, "published"));
-      publishedVault = [...publishedVault.filter((item) => item.id !== pair.match.id), hydratePersistedChord(record)];
+    if (pair && hostedReview && pair.status !== "published") {
+      if (pair.status === "rejected") await hostedReview.restore(pair.match.id);
+      await hostedReview.publish(pair.match); await refreshHostedWorkspace();
       batchStatus.textContent = `${pair.match.chordName} was restored to the Main Vault.`;
     }
     closeDuplicateDialog(); renderLibraryEditor(); renderCoverage();
@@ -625,27 +642,22 @@ byId("mergeDuplicate").addEventListener("click", async () => {
   const mergedTags = [...new Set([...(pair.match.descriptorTags ?? []), ...(pair.candidate.descriptorTags ?? [])])];
   const mergedMoods = [...new Set([...pair.match.moodTags, ...pair.candidate.moodTags])];
   const mergedStyles = [...new Set([...pair.match.genreTags, ...pair.candidate.genreTags])];
-  const published = publishedVault.find((item) => item.id === pair.match.id);
-  if (published) { published.descriptorTags = mergedTags; published.moodTags = mergedMoods; published.genreTags = mergedStyles; published.description ||= pair.candidate.description; }
-  else libraryEdits[pair.match.id] = { ...libraryEdits[pair.match.id], descriptorTags: mergedTags, moods: mergedMoods, styles: mergedStyles };
   try {
-    if (repositoryCapabilities.backend === "hosted") {
-      const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(pair.match.id)}/merge`, persistChordVoicing(pair.candidate, "pre-reviewed"));
-      publishedVault = [...publishedVault.filter((item) => item.id !== pair.match.id), hydratePersistedChord(record)];
-      approvedVault = approvedVault.filter((item) => item.id !== pair.candidate.id);
-    } else chordRepository.mergeVoicings(pair.match.id, pair.candidate);
+    if (hostedReview) { await hostedReview.merge(pair.match.id, pair.candidate); await refreshHostedWorkspace(); }
+    else {
+      const published = publishedVault.find((item) => item.id === pair.match.id);
+      if (published) { published.descriptorTags = mergedTags; published.moodTags = mergedMoods; published.genreTags = mergedStyles; published.description ||= pair.candidate.description; }
+      else libraryEdits[pair.match.id] = { ...libraryEdits[pair.match.id], descriptorTags: mergedTags, moods: mergedMoods, styles: mergedStyles };
+      chordRepository.mergeVoicings(pair.match.id, pair.candidate);
+    }
     audit("Merged duplicate metadata", pair.candidate.chordName); closeDuplicateDialog(); renderLibraryEditor(); renderCoverage();
   } catch (error) { batchStatus.textContent = error instanceof Error ? error.message : "Could not merge duplicate."; }
 });
 byId("replaceDuplicate").addEventListener("click", async () => {
   const pair = pendingDuplicatePair; const publish = pendingDuplicatePublish; if (!pair || !publish) return;
   try {
-    if (repositoryCapabilities.backend === "hosted") {
-      const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(pair.match.id)}/replace`, persistChordVoicing(pair.candidate, "published"));
-      publishedVault = [...publishedVault.filter((item) => item.id !== pair.match.id && item.id !== pair.candidate.id), hydratePersistedChord(record)];
-      approvedVault = approvedVault.filter((item) => item.id !== pair.candidate.id);
-      finalApprovedKeys.delete(pair.match.id); finalApprovedKeys.add(pair.candidate.id);
-    } else { chordRepository.replacePublishedVoicing(pair.match.id, pair.candidate); await publish(); }
+    if (hostedReview) { await hostedReview.replace(pair.match.id, pair.candidate); await refreshHostedWorkspace(); }
+    else { chordRepository.replacePublishedVoicing(pair.match.id, pair.candidate); await publish(); }
     pendingDuplicatePublish = null; pendingDuplicatePair = null; duplicateDialog.close(); audit("Replaced duplicate", pair.candidate.chordName); renderLibraryEditor(); renderCoverage();
   } catch (error) {
     if (error instanceof Error && /not found/i.test(error.message) && repositoryCapabilities.backend === "hosted") {
@@ -745,10 +757,8 @@ libraryGrid.addEventListener("click", (event) => {
     if (item.source === "Unapproved") {
       const candidate = libraryItemVoicing(editedLibraryItem(item));
       void requestPublish(candidate, async () => {
-        if (repositoryCapabilities.backend === "hosted") {
-          const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(candidate.id)}/publish`, persistChordVoicing(candidate, "published"));
-          publishedVault = [...publishedVault.filter((published) => published.id !== candidate.id), hydratePersistedChord(record)];
-        } else chordRepository.approvePublicVoicing(item.key);
+        if (hostedReview) { await hostedReview.preReview(candidate); await hostedReview.publish(candidate); await refreshHostedWorkspace(); }
+        else chordRepository.approvePublicVoicing(item.key);
         finalApprovedKeys.add(item.key);
         const stored = publicLibrary.find((publicItem) => publicItem.key === item.key);
         if (stored) stored.source = "Main Vault";
@@ -769,14 +779,14 @@ libraryGrid.addEventListener("click", (event) => {
     voicing.genreTags = edited.styles;
     void requestPublish(voicing, async () => {
       let publishedVoicing = voicing;
-      if (repositoryCapabilities.backend === "hosted") {
-        const record = await adminChordRequest(`/api/admin/chords/${encodeURIComponent(voicing.id)}/publish`, persistChordVoicing(voicing, "published"));
-        publishedVoicing = hydratePersistedChord(record);
-      } else chordRepository.publishVoicing(voicing);
-      publishedVoicing.approvalStatus = "approved";
-      publishedVault = [...publishedVault.filter((published) => published.id !== publishedVoicing.id), publishedVoicing];
-      finalApprovedKeys.add(publishedVoicing.id);
-      approvedVault = approvedVault.filter((approved) => approved.id !== publishedVoicing.id);
+      if (hostedReview) { await hostedReview.publish(voicing); await refreshHostedWorkspace(); publishedVoicing = publishedVault.find((item) => item.id === voicing.id) ?? voicing; }
+      else chordRepository.publishVoicing(voicing);
+      if (!hostedReview) publishedVoicing.approvalStatus = "approved";
+      if (!hostedReview) {
+        publishedVault = [...publishedVault.filter((published) => published.id !== publishedVoicing.id), publishedVoicing];
+        finalApprovedKeys.add(publishedVoicing.id);
+        approvedVault = approvedVault.filter((approved) => approved.id !== publishedVoicing.id);
+      }
       batchStatus.textContent = `${publishedVoicing.chordName} was published to the Main Vault. Refresh the public page to view it.`;
       audit("Final approved", publishedVoicing.chordName); renderLibraryEditor(); renderCoverage();
     }).catch((error: unknown) => {
@@ -819,7 +829,12 @@ byId("bulkLater").addEventListener("click", () => { selectedLibraryKeys.forEach(
 byId("bulkApprove").addEventListener("click", () => { const first = libraryGrid.querySelector<HTMLButtonElement>("[data-library-key] .library-select-box:checked")?.closest<HTMLElement>("[data-library-key]")?.querySelector<HTMLButtonElement>(".final-approve-button"); if (first) { batchStatus.textContent = "Approving selected chords one at a time so duplicate checks are preserved."; first.click(); } });
 
 byId("undoAction").addEventListener("click", () => { const action = undoAction; undoAction = null; byId<HTMLButtonElement>("undoAction").disabled = true; action?.(); audit("Undid last action", "workspace"); });
-byId("backupWorkflow").addEventListener("click", () => download(chordRepository.exportBackup(), `chord-vault-workspace-${new Date().toISOString().slice(0,10)}.json`, "application/json"));
+byId("backupWorkflow").addEventListener("click", () => {
+  if (!hostedReview) { download(chordRepository.exportBackup(), `chord-vault-workspace-${new Date().toISOString().slice(0,10)}.json`, "application/json"); return; }
+  void fetch(`${repositoryConfig.apiBase.replace(/\/$/, "")}/admin/chords/export?format=json`, { credentials: "same-origin", headers: { Accept: "application/json" } })
+    .then(async (response) => { if (!response.ok) throw new Error(`Backup failed with status ${response.status}`); download(await response.text(), `chord-vault-export-${new Date().toISOString().slice(0,10)}.json`, "application/json"); })
+    .catch((error: unknown) => { batchStatus.textContent = error instanceof Error ? error.message : "Could not export the hosted chord library."; });
+});
 document.addEventListener("keydown", (event) => { if ((event.target as HTMLElement).matches("input,textarea,select") || duplicateDialog.open) return; const key = event.key.toLowerCase(); if (key === "a") reviewCard.querySelector<HTMLButtonElement>('[data-status="approved"]')?.click(); if (key === "r") reviewCard.querySelector<HTMLButtonElement>('[data-status="rejected"]')?.click(); if (key === "l") document.getElementById("reviewLaterCandidate")?.click(); if (key === "arrowleft") advance(-1); if (key === "arrowright") advance(1); if (key === " ") { event.preventDefault(); document.getElementById("playCandidate")?.click(); } });
 renderCoverage(); renderAudit(); render();
 

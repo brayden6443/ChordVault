@@ -4,7 +4,8 @@ import test from "node:test";
 import { Miniflare } from "miniflare";
 import { CANONICAL_VOICINGS } from "../src/chords/canonical.ts";
 import { LocalStorageChordRepository, type StoragePort } from "../src/chords/chord-repository.ts";
-import { HostedReadChordRepository, loadHostedAdminWorkspace } from "../src/chords/hosted-repository.ts";
+import { HostedReadChordRepository } from "../src/chords/hosted-repository.ts";
+import { HostedReviewClient } from "../src/chords/hosted-review-client.ts";
 import { backupThenUpload, preparedPreReviewedImport, prepareHostedImport, uploadPreparedImport } from "../src/chords/hosted-import.ts";
 import { hydratePersistedChord, persistChordVoicing, validatePersistedChord } from "../src/chords/persisted.ts";
 import { createChordRepository, repositoryConfiguration } from "../src/chords/repository-composition.ts";
@@ -183,13 +184,61 @@ test("hosted review import posts pre-reviewed records with the current Access se
 
 test("hosted review workspace loads pre-reviewed D1 records with the Access session", async () => {
   let requestUrl = ""; let requestInit: RequestInit | undefined;
-  const workspace = await loadHostedAdminWorkspace("/api", async (input, init) => {
+  const workspace = await new HostedReviewClient("/api", async (input: RequestInfo | URL, init?: RequestInit) => {
     requestUrl = String(input); requestInit = init;
     return Response.json({ records: [{ ...cRecord, workflowStatus: "pre-reviewed" }, dRecord] });
-  });
+  }).loadWorkspace();
   assert.equal(requestUrl, "/api/admin/backups"); assert.equal(requestInit?.credentials, "same-origin");
   assert.deepEqual(workspace.preReviewed.map((record) => record.id), [cRecord.id]);
   assert.deepEqual(workspace.published.map((record) => record.id), [dRecord.id]);
+});
+
+function reviewClient(db: D1Database): HostedReviewClient {
+  const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "true", ALLOW_EDITORIAL_MUTATIONS: "true" } as WorkerEnv;
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = new URL(String(input), "https://example.test");
+    return handleApi(new Request(url, init), env, adminDependencies);
+  };
+  return new HostedReviewClient("https://example.test/api", fetcher);
+}
+
+test("hosted review refresh reloads the queue from D1 and approval persists", async () => {
+  const { mf, db, store } = await database();
+  await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" });
+  const first = await reviewClient(db).loadWorkspace();
+  assert.deepEqual(first.preReviewed.map((record) => record.id), [cRecord.id]);
+  await reviewClient(db).publish(first.preReviewed[0]!);
+  const refreshed = await reviewClient(db).loadWorkspace();
+  assert.deepEqual(refreshed.preReviewed, []); assert.deepEqual(refreshed.published.map((record) => record.id), [cRecord.id]);
+  await mf.dispose();
+});
+
+test("hosted review rejection persists after a fresh client reload", async () => {
+  const { mf, db, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" });
+  await reviewClient(db).reject(cRecord.id);
+  const refreshed = await reviewClient(db).loadWorkspace();
+  assert.deepEqual(refreshed.preReviewed, []); assert.deepEqual(refreshed.rejected.map((record) => record.id), [cRecord.id]);
+  await mf.dispose();
+});
+
+test("hosted pre-reviewed edits persist after refresh", async () => {
+  const { mf, db, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" });
+  await reviewClient(db).editPreReviewed(cRecord.id, { difficulty: 4, moods: ["Warm"] });
+  const refreshed = await reviewClient(db).loadWorkspace();
+  assert.equal(refreshed.preReviewed[0]?.difficulty, 4); assert.deepEqual(refreshed.preReviewed[0]?.moodTags, ["Warm"]);
+  await mf.dispose();
+});
+
+test("hosted review actions never invoke disabled browser repository mutations", async () => {
+  const local = new LocalStorageChordRepository(new MemoryStorage());
+  const disabled = new HostedReadChordRepository(local, []);
+  const original = disabled.publishVoicing.bind(disabled);
+  let disabledCalls = 0;
+  disabled.publishVoicing = (...args) => { disabledCalls += 1; return original(...args); };
+  const requests: string[] = [];
+  const client = new HostedReviewClient("/api", async (input) => { requests.push(String(input)); return Response.json({ record: cRecord }); });
+  await client.publish(cMajor);
+  assert.equal(disabledCalls, 0); assert.deepEqual(requests, [`/api/admin/chords/${cMajor.id}/publish`]);
 });
 
 test("disabled production mutations stay hidden while public API remains unauthenticated", async () => {
@@ -323,6 +372,7 @@ test("authenticated non-admin users cannot access review or mutate", async () =>
 test("authenticated administrator can load review, edit and publish with attributed audits", async () => {
   const { mf, db, store } = await database(); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "true", ASSETS: { fetch: async () => new Response("private review") } } as WorkerEnv;
   const review = await handleRequest(new Request("https://example.test/review.html"), env, adminDependencies); assert.equal(review.status, 200); assert.equal(review.headers.get("Cache-Control"), "no-store");
+  const preReview = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/pre-review`, { method: "POST", body: JSON.stringify(cRecord) }), env, adminDependencies); assert.equal(preReview.status, 200);
   const publish = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/publish`, { method: "POST", body: JSON.stringify(cRecord) }), env, adminDependencies); assert.equal(publish.status, 200);
   const edit = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/edit`, { method: "POST", body: JSON.stringify({ difficulty: 4, styles: ["Jazz"] }) }), env, adminDependencies); assert.equal(edit.status, 200);
   const current = await store.get(cRecord.id); assert.equal(current?.difficulty, 4); assert.deepEqual(current?.styles, ["Jazz"]); assert.deepEqual(current?.tags, []);
