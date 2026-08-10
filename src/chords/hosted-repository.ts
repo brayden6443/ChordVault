@@ -49,3 +49,18 @@ export async function loadHostedPublished(apiBase: string, fetcher: typeof fetch
   if (!response.ok) throw new ChordRepositoryError("CORRUPT_STORAGE", "Hosted chord service is unavailable.");
   const body = await response.json() as { records?: unknown[] }; if (!Array.isArray(body.records)) throw new ChordRepositoryError("CORRUPT_STORAGE", "Hosted chord response is malformed."); return body.records;
 }
+
+export async function loadHostedAdminWorkspace(apiBase: string, fetcher: typeof fetch = fetch): Promise<{ published: ChordVoicing[]; preReviewed: ChordVoicing[] }> {
+  const response = await fetcher(`${apiBase.replace(/\/$/, "")}/admin/backups`, { credentials: "same-origin", headers: { Accept: "application/json" } });
+  if (!response.ok) throw new ChordRepositoryError("CORRUPT_STORAGE", "Hosted administrator records could not be loaded.");
+  const body = await response.json() as { records?: unknown[] };
+  if (!Array.isArray(body.records)) throw new ChordRepositoryError("CORRUPT_STORAGE", "Hosted administrator response is malformed.");
+  const published: ChordVoicing[] = []; const preReviewed: ChordVoicing[] = [];
+  for (const raw of body.records) {
+    const result = validatePersistedChord(raw);
+    if (!result.ok) throw new ChordRepositoryError("SCHEMA_VALIDATION", "Hosted administrator record failed validation.");
+    if (result.value.workflowStatus === "published") published.push(hydratePersistedChord(result.value));
+    if (result.value.workflowStatus === "pre-reviewed") preReviewed.push(hydratePersistedChord(result.value));
+  }
+  return { published: withPublicSlugs(published), preReviewed };
+}

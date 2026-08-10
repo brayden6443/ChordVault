@@ -6,6 +6,7 @@ import { bassPitch, intervalLabel, intervalsRelativeToRoot, inversionForPitches,
 import { fretSpanFor } from "./chords/playability.ts";
 import { exactVoicingKey } from "./chords/identity.ts";
 import { createChordRepository, repositoryConfiguration } from "./chords/repository-composition.ts";
+import { loadHostedAdminWorkspace } from "./chords/hosted-repository.ts";
 import { applyEnrichmentImport, previewEnrichmentImport } from "./chords/hosted-import.ts";
 import { CHORD_SCHEMA_VERSION, hydratePersistedChord, persistChordVoicing, safeParseJson, validatePersistedChord, type PersistedChordRecordV1 } from "./chords/persisted.ts";
 import type { EnrichmentPreview } from "./chords/enrichment.ts";
@@ -23,8 +24,15 @@ const initialWorkspace = chordRepository.loadWorkspace();
 const savedReviews = initialWorkspace.savedReviews;
 let approvedVault = initialWorkspace.preReviewed;
 let publishedVault = initialWorkspace.published;
+let hostedWorkspaceLoadError = "";
+if (repositoryCapabilities.backend === "hosted") {
+  try {
+    const hostedWorkspace = await loadHostedAdminWorkspace(repositoryConfig.apiBase);
+    approvedVault = hostedWorkspace.preReviewed; publishedVault = hostedWorkspace.published;
+  } catch (error) { hostedWorkspaceLoadError = error instanceof Error ? error.message : "Hosted administrator records could not be loaded."; }
+}
 interface LibraryItem { key: string; name: string; root?: string; chordQuality?: string; difficulty: number; descriptorTags: string[]; moods: MoodTag[]; styles: StyleTag[]; frets?: number[]; fingers?: string[]; source: "Main Vault" | "Pre-reviewed" | "Unapproved"; }
-const finalApprovedKeys = new Set<string>(initialWorkspace.publishedKeys);
+const finalApprovedKeys = new Set<string>(publishedVault.map((record) => record.id));
 const fallbackPublicLibrary: LibraryItem[] = CANONICAL_VOICINGS.map((voicing) => ({
   key: voicing.id, name: voicing.chordName, root: voicing.root, chordQuality: voicing.chordQuality, difficulty: voicing.difficulty, source: "Main Vault",
   frets: voicing.fretPositions.map((fret) => fret ?? -1), fingers: (voicing.fingerPositions ?? []).map((finger) => finger ? String(finger) : ""),
@@ -68,6 +76,7 @@ const retainInput = byId<HTMLInputElement>("retainInput");
 const reviewCard = byId<HTMLElement>("reviewCard");
 const batchStatus = byId<HTMLElement>("batchStatus");
 if (!repositoryCapabilities.mutations) batchStatus.textContent = "This browser workspace remains read-only for hosted records. Authorized hosted changes use the protected administrator API.";
+if (hostedWorkspaceLoadError) batchStatus.textContent = hostedWorkspaceLoadError;
 
 candidates = initialWorkspace.candidates;
 
@@ -731,6 +740,8 @@ libraryGrid.addEventListener("click", (event) => {
     renderLibraryEditor();
   }
   if (button.classList.contains("final-approve-button")) {
+    const status = card.querySelector<HTMLElement>(".library-save-status");
+    button.disabled = true; button.textContent = "Publishing..."; if (status) status.textContent = "Checking for duplicates...";
     if (item.source === "Unapproved") {
       const candidate = libraryItemVoicing(editedLibraryItem(item));
       void requestPublish(candidate, async () => {
@@ -743,7 +754,10 @@ libraryGrid.addEventListener("click", (event) => {
         if (stored) stored.source = "Main Vault";
         batchStatus.textContent = `${item.name} was moved to the Main Vault. Refresh the public page to view it.`;
         audit("Final approved", item.name); renderLibraryEditor(); renderCoverage();
-      }).catch((error: unknown) => { batchStatus.textContent = error instanceof Error ? error.message : "Could not publish chord."; });
+      }).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "Could not publish chord.";
+        batchStatus.textContent = message; if (status) status.textContent = message; button.disabled = false; button.textContent = "Final approve +";
+      });
       return;
     }
     const voicing = approvedVault.find((approved) => approved.id === item.key);
@@ -765,7 +779,10 @@ libraryGrid.addEventListener("click", (event) => {
       approvedVault = approvedVault.filter((approved) => approved.id !== publishedVoicing.id);
       batchStatus.textContent = `${publishedVoicing.chordName} was published to the Main Vault. Refresh the public page to view it.`;
       audit("Final approved", publishedVoicing.chordName); renderLibraryEditor(); renderCoverage();
-    }).catch((error: unknown) => { batchStatus.textContent = error instanceof Error ? error.message : "Could not publish chord."; });
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Could not publish chord.";
+      batchStatus.textContent = message; if (status) status.textContent = message; button.disabled = false; button.textContent = "Final approve +";
+    });
   }
 });
 

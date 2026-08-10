@@ -4,7 +4,7 @@ import test from "node:test";
 import { Miniflare } from "miniflare";
 import { CANONICAL_VOICINGS } from "../src/chords/canonical.ts";
 import { LocalStorageChordRepository, type StoragePort } from "../src/chords/chord-repository.ts";
-import { HostedReadChordRepository } from "../src/chords/hosted-repository.ts";
+import { HostedReadChordRepository, loadHostedAdminWorkspace } from "../src/chords/hosted-repository.ts";
 import { backupThenUpload, preparedPreReviewedImport, prepareHostedImport, uploadPreparedImport } from "../src/chords/hosted-import.ts";
 import { hydratePersistedChord, persistChordVoicing, validatePersistedChord } from "../src/chords/persisted.ts";
 import { createChordRepository, repositoryConfiguration } from "../src/chords/repository-composition.ts";
@@ -179,6 +179,17 @@ test("hosted review import posts pre-reviewed records with the current Access se
   assert.equal(requestInit?.credentials, "same-origin");
   const payload = JSON.parse(String(requestInit?.body)) as { records: Array<{ workflowStatus: string }>; dryRun: boolean };
   assert.equal(payload.records.length, 1); assert.equal(payload.records[0]?.workflowStatus, "pre-reviewed"); assert.equal(payload.dryRun, false);
+});
+
+test("hosted review workspace loads pre-reviewed D1 records with the Access session", async () => {
+  let requestUrl = ""; let requestInit: RequestInit | undefined;
+  const workspace = await loadHostedAdminWorkspace("/api", async (input, init) => {
+    requestUrl = String(input); requestInit = init;
+    return Response.json({ records: [{ ...cRecord, workflowStatus: "pre-reviewed" }, dRecord] });
+  });
+  assert.equal(requestUrl, "/api/admin/backups"); assert.equal(requestInit?.credentials, "same-origin");
+  assert.deepEqual(workspace.preReviewed.map((record) => record.id), [cRecord.id]);
+  assert.deepEqual(workspace.published.map((record) => record.id), [dRecord.id]);
 });
 
 test("disabled production mutations stay hidden while public API remains unauthenticated", async () => {
