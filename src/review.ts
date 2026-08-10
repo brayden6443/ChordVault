@@ -600,27 +600,35 @@ function duplicateCard(label: string, voicing: ChordVoicing): string {
 
 const duplicateDialog = byId<HTMLDialogElement>("duplicateDialog");
 let pendingDuplicatePublish: (() => Promise<void>) | null = null;
-let pendingDuplicatePair: { candidate: ChordVoicing; match: ChordVoicing; status: PersistedChordRecordV1["workflowStatus"] } | null = null;
+type DuplicateAction = "merge-metadata" | "replace" | "keep-existing" | "open-existing-review" | "restore" | "keep-rejected";
+type DuplicateMatchType = "exact-id" | "exact-identity" | "near-match";
+let pendingDuplicatePair: { candidate: ChordVoicing; match: ChordVoicing; status: PersistedChordRecordV1["workflowStatus"]; matchType: DuplicateMatchType; allowedActions: DuplicateAction[] } | null = null;
 
-async function hostedDuplicate(candidate: ChordVoicing): Promise<{ match: ChordVoicing; similarity: number; exact: boolean; status: PersistedChordRecordV1["workflowStatus"] } | null> {
-  const response = await fetch("/api/admin/chords/duplicate", { method: "POST", credentials: "same-origin", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(persistChordVoicing(candidate, "pre-reviewed")) });
-  const payload = await response.json() as { duplicate?: { record: PersistedChordRecordV1; similarity: number; exact: boolean } | null; error?: { message?: string } };
+async function hostedDuplicate(candidate: ChordVoicing): Promise<{ match: ChordVoicing; similarity: number; exact: boolean; status: PersistedChordRecordV1["workflowStatus"]; matchType: DuplicateMatchType; allowedActions: DuplicateAction[] } | null> {
+  const response = await fetch("/api/admin/chords/duplicate?excludeSelf=true", { method: "POST", credentials: "same-origin", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(persistChordVoicing(candidate, "pre-reviewed")) });
+  const payload = await response.json() as { duplicate?: { record: PersistedChordRecordV1; similarity: number; exact: boolean; matchType: DuplicateMatchType; existingWorkflowStatus: PersistedChordRecordV1["workflowStatus"]; allowedActions: DuplicateAction[] } | null; error?: { message?: string } };
   if (!response.ok) throw new Error(payload.error?.message ?? `Duplicate check failed with status ${response.status}`);
-  return payload.duplicate ? { match: hydratePersistedChord(payload.duplicate.record), similarity: payload.duplicate.similarity, exact: payload.duplicate.exact, status: payload.duplicate.record.workflowStatus } : null;
+  return payload.duplicate ? { match: hydratePersistedChord(payload.duplicate.record), similarity: payload.duplicate.similarity, exact: payload.duplicate.exact, status: payload.duplicate.existingWorkflowStatus, matchType: payload.duplicate.matchType, allowedActions: payload.duplicate.allowedActions } : null;
 }
 
 async function requestPublish(candidate: ChordVoicing, publish: () => Promise<void>): Promise<void> {
   const localDuplicate = findVoicingDuplicate(candidate, mainVaultVoicings());
   const duplicate = repositoryCapabilities.backend === "hosted"
     ? await hostedDuplicate(candidate)
-    : localDuplicate ? { ...localDuplicate, status: "published" as const } : null;
+    : localDuplicate ? { ...localDuplicate, status: "published" as const, matchType: (localDuplicate.exact ? "exact-identity" : "near-match") as DuplicateMatchType, allowedActions: ["merge-metadata", "replace", "keep-existing"] as DuplicateAction[] } : null;
   if (!duplicate) { await publish(); return; }
+  if (duplicate.matchType === "exact-id" && duplicate.match.id === candidate.id && duplicate.status === "pre-reviewed") { await publish(); return; }
   pendingDuplicatePublish = publish;
-  pendingDuplicatePair = { candidate, match: duplicate.match, status: duplicate.status };
+  pendingDuplicatePair = { candidate, match: duplicate.match, status: duplicate.status, matchType: duplicate.matchType, allowedActions: duplicate.allowedActions };
+  const statusLabel = duplicate.status === "published" ? "Published" : duplicate.status === "pre-reviewed" ? "Pre-reviewed" : "Rejected";
   byId("duplicateSummary").textContent = duplicate.exact
-    ? "These fret positions already exist in the Main Vault. Compare them before continuing."
-    : `This voicing is ${duplicate.similarity}% similar to one in the Main Vault. Compare them before continuing.`;
-  byId("duplicateComparison").innerHTML = duplicateCard("Chord being approved", candidate) + duplicateCard("Existing Main Vault chord", duplicate.match);
+    ? `An exact ${duplicate.matchType === "exact-id" ? "record" : "voicing"} match exists with ${statusLabel.toLowerCase()} status.`
+    : `This voicing is ${duplicate.similarity}% similar to a ${statusLabel.toLowerCase()} chord. Compare them before continuing.`;
+  byId("duplicateComparison").innerHTML = duplicateCard("Chord being approved", candidate) + duplicateCard(`${statusLabel} chord`, duplicate.match);
+  const keep = byId<HTMLButtonElement>("keepExisting"); const merge = byId<HTMLButtonElement>("mergeDuplicate"); const replace = byId<HTMLButtonElement>("replaceDuplicate"); const keepBoth = byId<HTMLButtonElement>("publishDuplicate");
+  keep.hidden = false; keep.textContent = duplicate.status === "pre-reviewed" ? "Open existing review" : duplicate.status === "rejected" ? "Keep rejected" : "Keep existing";
+  merge.hidden = !(duplicate.allowedActions.includes("merge-metadata") || duplicate.allowedActions.includes("restore")); merge.textContent = duplicate.allowedActions.includes("restore") ? "Restore" : "Merge metadata";
+  replace.hidden = !duplicate.allowedActions.includes("replace"); keepBoth.hidden = true;
   duplicateDialog.showModal();
 }
 
@@ -629,10 +637,10 @@ byId("closeDuplicate").addEventListener("click", closeDuplicateDialog);
 byId("keepExisting").addEventListener("click", async () => {
   const pair = pendingDuplicatePair;
   try {
-    if (pair && hostedReview && pair.status !== "published") {
-      if (pair.status === "rejected") await hostedReview.restore(pair.match.id);
-      await hostedReview.publish(pair.match); await refreshHostedWorkspace();
-      batchStatus.textContent = `${pair.match.chordName} was restored to the Main Vault.`;
+    if (pair?.status === "pre-reviewed") {
+      activeLibrarySource = "Pre-reviewed"; libraryPage = Math.max(0, Math.floor(approvedVault.findIndex((item) => item.id === pair.match.id) / 12));
+      librarySourceTabs.querySelectorAll<HTMLButtonElement>("[data-library-source]").forEach((button) => { const active = button.dataset.librarySource === activeLibrarySource; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); });
+      closeDuplicateDialog(); renderLibraryEditor(); document.getElementById("libraryEditorTitle")?.scrollIntoView({ behavior: "smooth" }); return;
     }
     closeDuplicateDialog(); renderLibraryEditor(); renderCoverage();
   } catch (error) { batchStatus.textContent = error instanceof Error ? error.message : "Could not resolve duplicate."; }
@@ -644,15 +652,20 @@ byId("mergeDuplicate").addEventListener("click", async () => {
   const mergedMoods = [...new Set([...pair.match.moodTags, ...pair.candidate.moodTags])];
   const mergedStyles = [...new Set([...pair.match.genreTags, ...pair.candidate.genreTags])];
   try {
-    if (hostedReview) { await hostedReview.merge(pair.match.id, pair.candidate); await refreshHostedWorkspace(); }
+    if (hostedReview && pair.allowedActions.includes("restore")) { await hostedReview.restore(pair.match.id); await refreshHostedWorkspace(); batchStatus.textContent = `${pair.match.chordName} was restored to Pre-reviewed.`; }
+    else if (hostedReview) { await hostedReview.merge(pair.match.id, pair.candidate); await refreshHostedWorkspace(); }
     else {
       const published = publishedVault.find((item) => item.id === pair.match.id);
       if (published) { published.descriptorTags = mergedTags; published.moodTags = mergedMoods; published.genreTags = mergedStyles; published.description ||= pair.candidate.description; }
       else libraryEdits[pair.match.id] = { ...libraryEdits[pair.match.id], descriptorTags: mergedTags, moods: mergedMoods, styles: mergedStyles };
       chordRepository.mergeVoicings(pair.match.id, pair.candidate);
     }
-    audit("Merged duplicate metadata", pair.candidate.chordName); closeDuplicateDialog(); renderLibraryEditor(); renderCoverage();
-  } catch (error) { batchStatus.textContent = error instanceof Error ? error.message : "Could not merge duplicate."; }
+    audit(pair.allowedActions.includes("restore") ? "Restored duplicate" : "Merged duplicate metadata", pair.candidate.chordName); closeDuplicateDialog(); renderLibraryEditor(); renderCoverage();
+  } catch (error) {
+    const publish = pendingDuplicatePublish;
+    if (error instanceof Error && /not found/i.test(error.message) && publish) { closeDuplicateDialog(); await requestPublish(pair.candidate, publish); }
+    else batchStatus.textContent = error instanceof Error ? error.message : "Could not resolve duplicate.";
+  }
 });
 byId("replaceDuplicate").addEventListener("click", async () => {
   const pair = pendingDuplicatePair; const publish = pendingDuplicatePublish; if (!pair || !publish) return;
@@ -662,7 +675,7 @@ byId("replaceDuplicate").addEventListener("click", async () => {
     pendingDuplicatePublish = null; pendingDuplicatePair = null; duplicateDialog.close(); audit("Replaced duplicate", pair.candidate.chordName); renderLibraryEditor(); renderCoverage();
   } catch (error) {
     if (error instanceof Error && /not found/i.test(error.message) && repositoryCapabilities.backend === "hosted") {
-      closeDuplicateDialog(); await publish();
+      closeDuplicateDialog(); await requestPublish(pair.candidate, publish);
     } else batchStatus.textContent = error instanceof Error ? error.message : "Could not replace duplicate.";
   }
 });

@@ -111,7 +111,7 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
       return json({ report: await store.applyEnrichment(Array.isArray(value.records) ? value.records : [], principal.email) });
     }
     if (request.method === "POST" && path === "/api/admin/chords/duplicate") {
-      return json({ duplicate: await store.findDuplicate(await body(request)) });
+      return json({ duplicate: await store.findDuplicate(await body(request), { excludeExactId: url.searchParams.get("excludeSelf") === "true" }) });
     }
     if (!operation || request.method !== "POST") return json({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed." } }, 405);
     const id = decodeURIComponent(operation[1]); const action = operation[2];

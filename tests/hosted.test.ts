@@ -102,15 +102,24 @@ test("duplicate published voicings conflict", async () => {
 test("duplicate lookup reports a duplicate that is currently published", async () => {
   const { mf, store } = await database(); await publishRecord(store, cRecord);
   const duplicate = await store.findDuplicate({ ...cRecord, id: "incoming-c", workflowStatus: "pre-reviewed" });
-  assert.equal(duplicate?.record.id, cRecord.id); assert.equal(duplicate?.record.workflowStatus, "published"); assert.equal(duplicate?.exact, true);
+  assert.equal(duplicate?.matchedRecordId, cRecord.id); assert.equal(duplicate?.existingWorkflowStatus, "published"); assert.equal(duplicate?.matchType, "exact-identity");
+  assert.deepEqual(duplicate?.allowedActions, ["merge-metadata", "replace", "keep-existing"]);
   await mf.dispose();
+});
+
+test("duplicate lookup reports exact-id pre-reviewed records with review actions", async () => {
+  const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" });
+  const duplicate = await store.findDuplicate({ ...cRecord, workflowStatus: "pre-reviewed" });
+  assert.equal(duplicate?.matchType, "exact-id"); assert.equal(duplicate?.existingWorkflowStatus, "pre-reviewed");
+  assert.deepEqual(duplicate?.allowedActions, ["open-existing-review", "merge-metadata", "replace"]); await mf.dispose();
 });
 
 test("duplicate lookup finds archived chords but ignores quarantine rows", async () => {
   const { mf, db, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" }); await store.reject(cRecord.id);
   await db.prepare("INSERT INTO quarantined_records (source,raw_json,issues_json) VALUES (?1,?2,?3)").bind("test", JSON.stringify({ ...cRecord, id: "quarantined-c" }), "[]").run();
   const duplicate = await store.findDuplicate({ ...cRecord, id: "incoming-c", workflowStatus: "pre-reviewed" });
-  assert.equal(duplicate?.record.id, cRecord.id); assert.equal(duplicate?.record.workflowStatus, "rejected");
+  assert.equal(duplicate?.record.id, cRecord.id); assert.equal(duplicate?.existingWorkflowStatus, "rejected"); assert.equal(duplicate?.matchType, "exact-identity");
+  assert.deepEqual(duplicate?.allowedActions, ["restore", "replace", "keep-rejected"]);
   await store.preReview({ ...dRecord, id: "incoming-d", workflowStatus: "pre-reviewed" }); await store.publish({ ...dRecord, id: "incoming-d" });
   assert.equal((await store.list("published")).some((record) => record.id === "quarantined-c"), false);
   await mf.dispose();
@@ -123,19 +132,26 @@ test("a stale duplicate destination is rejected without changing D1", async () =
   assert.equal((await store.listAll()).length, 0); await mf.dispose();
 });
 
-test("merge combines approved metadata and publishes a pre-reviewed destination", async () => {
+test("merge combines approved metadata while preserving a pre-reviewed destination", async () => {
   const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed", tags: ["Open"] });
   const source = { ...cRecord, id: "incoming-c", workflowStatus: "pre-reviewed" as const, description: "New description", tags: ["Essential"], moods: ["Warm" as const], styles: ["Blues" as const] };
   await store.preReview(source); const merged = await store.merge(cRecord.id, source, "admin@example.test");
-  assert.equal(merged.workflowStatus, "published"); assert.equal(merged.description, "New description"); assert.deepEqual(merged.tags.sort(), ["Essential", "Open"]); assert.deepEqual(merged.moods, ["Warm"]); assert.deepEqual(merged.styles, ["Blues"]);
-  assert.equal((await store.get(source.id))?.workflowStatus, "rejected"); assert.deepEqual((await store.list("published")).map((record) => record.id), [cRecord.id]);
+  assert.equal(merged.workflowStatus, "pre-reviewed"); assert.equal(merged.description, "New description"); assert.deepEqual(merged.tags.sort(), ["Essential", "Open"]); assert.deepEqual(merged.moods, ["Warm"]); assert.deepEqual(merged.styles, ["Blues"]);
+  assert.equal((await store.get(source.id))?.workflowStatus, "rejected"); assert.deepEqual((await store.list("published")), []);
   await mf.dispose();
+});
+
+test("rejected duplicate can be replaced without changing the workflow contract", async () => {
+  const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" }); await store.reject(cRecord.id);
+  const replacement = { ...dRecord, id: "replacement-d", workflowStatus: "pre-reviewed" as const }; await store.preReview(replacement);
+  const published = await store.replace(cRecord.id, replacement, "admin@example.test");
+  assert.equal(published.workflowStatus, "published"); assert.equal((await store.get(cRecord.id))?.workflowStatus, "rejected"); await mf.dispose();
 });
 
 test("approve after duplicate resolution leaves one public chord", async () => {
   const { mf, store } = await database(); await publishRecord(store, cRecord);
   const candidate = { ...cRecord, id: "approved-c", workflowStatus: "pre-reviewed" as const };
-  await store.preReview(candidate); const duplicate = await store.findDuplicate(candidate); assert.equal(duplicate?.record.workflowStatus, "published");
+  await store.preReview(candidate); const duplicate = await store.findDuplicate(candidate, { excludeExactId: true }); assert.equal(duplicate?.record.workflowStatus, "published");
   const published = await store.replace(duplicate!.record.id, candidate, "admin@example.test");
   assert.equal(published.workflowStatus, "published"); assert.deepEqual((await store.list("published")).map((record) => record.id), [candidate.id]);
   await mf.dispose();

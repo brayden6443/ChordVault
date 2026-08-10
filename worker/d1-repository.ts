@@ -11,7 +11,9 @@ export interface HostedImportReport { inserted: number; updated: number; skipped
 export interface HostedEnrichmentApplyReport { preview: EnrichmentPreview; applied: { new: number; updated: number }; records: PersistedChordRecordV1[] }
 export interface PublishedPosition { record: PersistedChordRecordV1; slug: string }
 export interface PublishedSlugResolution { record: PersistedChordRecordV1; slug: string; legacy: boolean; positions: PublishedPosition[]; positionIndex: number }
-export interface HostedDuplicateMatch { record: PersistedChordRecordV1; similarity: number; exact: boolean }
+export type HostedDuplicateMatchType = "exact-id" | "exact-identity" | "near-match";
+export type HostedDuplicateAction = "merge-metadata" | "replace" | "keep-existing" | "open-existing-review" | "restore" | "keep-rejected";
+export interface HostedDuplicateMatch { record: PersistedChordRecordV1; matchedRecordId: string; matchType: HostedDuplicateMatchType; existingWorkflowStatus: PersistedWorkflowStatus; allowedActions: HostedDuplicateAction[]; similarity: number; exact: boolean }
 
 export class HostedDataError extends Error {
   readonly code: "INVALID_RECORD" | "UNKNOWN_VERSION" | "INVALID_TRANSITION" | "DUPLICATE" | "NOT_FOUND" | "DATABASE";
@@ -54,15 +56,27 @@ export class D1ChordStore {
     return row ? parseRow(row) : null;
   }
 
-  async findDuplicate(value: unknown): Promise<HostedDuplicateMatch | null> {
+  async findDuplicate(value: unknown, options: { excludeExactId?: boolean } = {}): Promise<HostedDuplicateMatch | null> {
     const validation = validatePersistedChord(value);
     if (!validation.ok) throw new HostedDataError("INVALID_RECORD", "Chord payload failed validation.");
-    const candidate = hydratePersistedChord(validation.value);
-    const records = (await this.listAll()).filter((record) => record.id !== validation.value.id);
-    const match = findVoicingDuplicate(candidate, records.map(hydratePersistedChord));
+    const candidate = hydratePersistedChord(validation.value); const records = await this.listAll();
+    const result = (record: PersistedChordRecordV1, matchType: HostedDuplicateMatchType, similarity: number): HostedDuplicateMatch => ({
+      record, matchedRecordId: record.id, matchType, existingWorkflowStatus: record.workflowStatus,
+      allowedActions: record.workflowStatus === "published" ? ["merge-metadata", "replace", "keep-existing"]
+        : record.workflowStatus === "pre-reviewed" ? ["open-existing-review", "merge-metadata", "replace"]
+          : ["restore", "replace", "keep-rejected"],
+      similarity, exact: matchType !== "near-match",
+    });
+    const idMatch = options.excludeExactId ? undefined : records.find((record) => record.id === validation.value.id);
+    if (idMatch) return result(idMatch, "exact-id", 100);
+    const candidateIdentity = exactVoicingKey(candidate);
+    const otherRecords = records.filter((record) => record.id !== validation.value.id);
+    const identityMatch = otherRecords.find((record) => exactVoicingKey(hydratePersistedChord(record)) === candidateIdentity);
+    if (identityMatch) return result(identityMatch, "exact-identity", 100);
+    const match = findVoicingDuplicate(candidate, otherRecords.map(hydratePersistedChord));
     if (!match) return null;
-    const record = records.find((item) => item.id === match.match.id);
-    return record ? { record, similarity: match.similarity, exact: match.exact } : null;
+    const record = otherRecords.find((item) => item.id === match.match.id);
+    return record ? result(record, "near-match", match.similarity) : null;
   }
 
   async resolvePublishedSlug(slug: string): Promise<PublishedSlugResolution | null> {
@@ -157,21 +171,24 @@ export class D1ChordStore {
     const old = await this.get(replacedId); if (!old) throw new HostedDataError("NOT_FOUND", "Replacement target not found.");
     const input = this.validated(value, "published"); const existingReplacement = input.id === replacedId ? old : await this.get(input.id);
     const replacement = { ...input, workflowStatus: this.status(input.id === replacedId ? null : existingReplacement?.workflowStatus ?? null, "replace-new") };
-    const rejected = { ...old, workflowStatus: this.status(old.workflowStatus, "replace-old") };
+    const oldStatus = old.workflowStatus === "published" ? this.status(old.workflowStatus, "replace-old")
+      : old.workflowStatus === "pre-reviewed" ? this.status(old.workflowStatus, "reject") : old.workflowStatus;
+    const rejected = { ...old, workflowStatus: oldStatus };
     await this.atomic([this.upsert(rejected), this.upsert(replacement), ...this.tagStatements(replacement), this.audit(replacement.id, "Replaced chord", actor, { replacedId })]); return replacement;
   }
 
   async merge(targetId: string, value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
     const target = await this.get(targetId); if (!target) throw new HostedDataError("NOT_FOUND", "Merge target not found.");
+    if (target.workflowStatus === "rejected") throw new HostedDataError("INVALID_TRANSITION", "Rejected duplicate targets must be restored or replaced before metadata can be merged.");
     const source = this.validated(value, "published");
-    const action = target.workflowStatus === "published" ? "metadata-update" : "approve";
+    const action = target.workflowStatus === "published" ? "metadata-update" : "enrichment";
     const merged = { ...applyEnrichmentPatch(target, duplicateMergePatch(target, source)), workflowStatus: this.status(target.workflowStatus, action) };
     const statements = [this.upsert(merged), ...this.tagStatements(merged)];
     if (source.id !== targetId) {
       const storedSource = await this.get(source.id);
       if (storedSource) statements.push(this.upsert({ ...storedSource, workflowStatus: this.status(storedSource.workflowStatus, "reject") }));
     }
-    statements.push(this.audit(targetId, "Merged duplicate metadata and published", actor, { sourceId: source.id }));
+    statements.push(this.audit(targetId, "Merged duplicate metadata", actor, { sourceId: source.id, workflowStatus: merged.workflowStatus }));
     await this.atomic(statements); return merged;
   }
 
