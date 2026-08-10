@@ -71,6 +71,18 @@ export function applyEnrichmentPatch(current: PersistedChordRecordV1, patch: Enr
   return validation.value;
 }
 
+export function duplicateMergePatch(target: PersistedChordRecordV1, source: PersistedChordRecordV1): EnrichmentPatch {
+  return {
+    difficulty: source.difficulty,
+    tags: [...new Set([...target.tags, ...source.tags])],
+    moods: [...new Set([...(target.moods ?? []), ...(source.moods ?? [])])],
+    styles: [...new Set([...(target.styles ?? []), ...(source.styles ?? [])])],
+    description: target.description || source.description,
+    relatedChords: [...new Set([...(target.relatedChords ?? []), ...(source.relatedChords ?? [])])],
+    ...(source.displayNameOverride ? { displayNameOverride: source.displayNameOverride } : {}),
+  };
+}
+
 export function classifyEnrichmentRows(values: unknown[], existingRecords: PersistedChordRecordV1[]): EnrichmentPreview {
   const existing = new Map(existingRecords.map((record) => [record.id, record]));
   const rows: EnrichmentPreviewRow[] = values.map((value, index) => {

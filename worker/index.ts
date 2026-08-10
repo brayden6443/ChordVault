@@ -14,7 +14,7 @@ function json(value: unknown, status = 200, isPublic = false): Response {
 
 function errorResponse(error: unknown): Response {
   if (error instanceof HostedDataError) {
-    const status = error.code === "NOT_FOUND" ? 404 : error.code === "DUPLICATE" ? 409 : error.code === "DATABASE" ? 503 : 400;
+    const status = error.code === "NOT_FOUND" ? 404 : error.code === "DUPLICATE" || error.code === "INVALID_TRANSITION" ? 409 : error.code === "DATABASE" ? 503 : 400;
     return json({ error: { code: error.code, message: status === 503 ? "The chord service is temporarily unavailable." : error.message } }, status);
   }
   return json({ error: { code: "INTERNAL", message: "The chord service could not complete the request." } }, 500);
@@ -96,7 +96,7 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
       const value = await body(request) as { records?: unknown[] };
       return json({ preview: await store.previewEnrichment(Array.isArray(value.records) ? value.records : []) });
     }
-    const operation = path.match(/^\/api\/admin\/chords\/([^/]+)\/(pre-review|publish|reject|replace|merge|edit)$/);
+    const operation = path.match(/^\/api\/admin\/chords\/([^/]+)\/(pre-review|publish|reject|restore|replace|merge|edit)$/);
     if (operation?.[2] === "edit" && request.method === "POST" && editorialEnabled(env)) {
       const id = decodeURIComponent(operation[1]);
       return json({ record: await store.edit(id, await body(request), principal.email) });
@@ -115,8 +115,12 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
     }
     if (!operation || request.method !== "POST") return json({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed." } }, 405);
     const id = decodeURIComponent(operation[1]); const action = operation[2];
-    if (action === "reject") { await store.reject(id, principal.email); return json({ ok: true }); }
+    if (action === "reject") return json({ record: await store.reject(id, principal.email) });
+    if (action === "restore") return json({ record: await store.restore(id, principal.email) });
     const value = await body(request);
+    if ((action === "pre-review" || action === "publish") && (!value || typeof value !== "object" || Array.isArray(value) || (value as { id?: unknown }).id !== id)) {
+      throw new HostedDataError("INVALID_RECORD", "Request path and chord ID must match.");
+    }
     if (action === "pre-review") return json({ record: await store.preReview(value, principal.email) });
     if (action === "publish") return json({ record: await store.publish(value, principal.email) });
     if (action === "replace") return json({ record: await store.replace(id, value, principal.email) });

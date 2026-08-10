@@ -32,14 +32,55 @@ async function database(): Promise<{ mf: Miniflare; db: D1Database; store: D1Cho
   return { mf, db, store: new D1ChordStore(db) };
 }
 
+async function publishRecord(store: D1ChordStore, record: typeof cRecord): Promise<void> {
+  await store.preReview({ ...record, workflowStatus: "pre-reviewed" }); await store.publish(record);
+}
+
 test("initial migration is retry-safe and creates the tracked schema", async () => {
   const { mf, db } = await database();
   await applyMigration(db);
   const row = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chord_voicings'").first<{ name: string }>(); assert.equal(row?.name, "chord_voicings"); await mf.dispose();
 });
 
+test("workflow contract imports every new chord as pre-reviewed", async () => {
+  const { mf, store } = await database(); const report = await store.importRecords([cRecord], false, "admin@example.test");
+  assert.equal(report.inserted, 1); assert.equal(report.records[0]?.workflowStatus, "pre-reviewed");
+  assert.equal((await store.get(cRecord.id))?.workflowStatus, "pre-reviewed"); await mf.dispose();
+});
+
+test("workflow contract approves pre-reviewed chords as published", async () => {
+  const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" });
+  const result = await store.publish(cRecord, "admin@example.test"); assert.equal(result.workflowStatus, "published");
+  assert.equal((await store.get(cRecord.id))?.workflowStatus, "published"); await mf.dispose();
+});
+
+test("workflow contract rejects pre-reviewed chords without deleting them", async () => {
+  const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" });
+  const result = await store.reject(cRecord.id, "admin@example.test"); assert.equal(result.workflowStatus, "rejected");
+  assert.equal((await store.get(cRecord.id))?.id, cRecord.id); await mf.dispose();
+});
+
+test("workflow contract preserves status during enrichment", async () => {
+  for (const status of ["pre-reviewed", "published", "rejected"] as const) {
+    const setup = await database(); await setup.store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" });
+    if (status === "published") await setup.store.publish(cRecord);
+    if (status === "rejected") await setup.store.reject(cRecord.id);
+    const report = await setup.store.applyEnrichment([{ id: cRecord.id, description: `Updated ${status}` }], "admin@example.test");
+    assert.equal(report.records[0]?.workflowStatus, status); assert.equal((await setup.store.get(cRecord.id))?.workflowStatus, status); await setup.mf.dispose();
+  }
+});
+
+test("workflow contract rejects invalid transitions with a specific conflict", async () => {
+  const { mf, db, store } = await database();
+  await assert.rejects(store.publish(cRecord), (error) => error instanceof HostedDataError && error.code === "INVALID_TRANSITION");
+  await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" }); await store.publish(cRecord);
+  await assert.rejects(store.reject(cRecord.id), (error) => error instanceof HostedDataError && error.code === "INVALID_TRANSITION");
+  const response = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/reject`, { method: "POST" }), { DB: db, ALLOW_ADMIN_MUTATIONS: "true" } as WorkerEnv, adminDependencies);
+  assert.equal(response.status, 409); assert.equal(((await response.json()) as { error: { code: string } }).error.code, "INVALID_TRANSITION"); await mf.dispose();
+});
+
 test("hosted store inserts valid records, rejects invalid versions, and returns published only", async () => {
-  const { mf, store } = await database(); await store.preReview({ ...dRecord, workflowStatus: "pre-reviewed" }); await store.publish(cRecord);
+  const { mf, store } = await database(); await store.preReview({ ...dRecord, workflowStatus: "pre-reviewed" }); await publishRecord(store, cRecord);
   assert.deepEqual((await store.list("published")).map((item) => item.id), [cRecord.id]);
   await assert.rejects(store.publish({ ...cRecord, id: "future", schemaVersion: 99 }), (error) => error instanceof HostedDataError && error.code === "UNKNOWN_VERSION");
   await assert.rejects(store.publish({ id: "bad" }), (error) => error instanceof HostedDataError && error.code === "INVALID_RECORD"); await mf.dispose();
@@ -52,23 +93,24 @@ test("malformed database rows are rejected before becoming domain records", asyn
 });
 
 test("duplicate published voicings conflict", async () => {
-  const { mf, store } = await database(); await store.publish(cRecord);
+  const { mf, store } = await database(); await publishRecord(store, cRecord);
+  await store.preReview({ ...cRecord, id: "duplicate-c", workflowStatus: "pre-reviewed" });
   await assert.rejects(store.publish({ ...cRecord, id: "duplicate-c" }), (error) => error instanceof HostedDataError && error.code === "DUPLICATE"); await mf.dispose();
 });
 
 test("duplicate lookup reports a duplicate that is currently published", async () => {
-  const { mf, store } = await database(); await store.publish(cRecord);
+  const { mf, store } = await database(); await publishRecord(store, cRecord);
   const duplicate = await store.findDuplicate({ ...cRecord, id: "incoming-c", workflowStatus: "pre-reviewed" });
   assert.equal(duplicate?.record.id, cRecord.id); assert.equal(duplicate?.record.workflowStatus, "published"); assert.equal(duplicate?.exact, true);
   await mf.dispose();
 });
 
 test("duplicate lookup finds archived chords but ignores quarantine rows", async () => {
-  const { mf, db, store } = await database(); await store.publish(cRecord); await store.reject(cRecord.id);
+  const { mf, db, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" }); await store.reject(cRecord.id);
   await db.prepare("INSERT INTO quarantined_records (source,raw_json,issues_json) VALUES (?1,?2,?3)").bind("test", JSON.stringify({ ...cRecord, id: "quarantined-c" }), "[]").run();
   const duplicate = await store.findDuplicate({ ...cRecord, id: "incoming-c", workflowStatus: "pre-reviewed" });
   assert.equal(duplicate?.record.id, cRecord.id); assert.equal(duplicate?.record.workflowStatus, "rejected");
-  await store.publish({ ...dRecord, id: "incoming-d" });
+  await store.preReview({ ...dRecord, id: "incoming-d", workflowStatus: "pre-reviewed" }); await store.publish({ ...dRecord, id: "incoming-d" });
   assert.equal((await store.list("published")).some((record) => record.id === "quarantined-c"), false);
   await mf.dispose();
 });
@@ -80,8 +122,8 @@ test("a stale duplicate destination is rejected without changing D1", async () =
   assert.equal((await store.listAll()).length, 0); await mf.dispose();
 });
 
-test("merge combines allowed metadata and restores the destination to published", async () => {
-  const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed", tags: ["Open"] }); await store.reject(cRecord.id);
+test("merge combines approved metadata and publishes a pre-reviewed destination", async () => {
+  const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed", tags: ["Open"] });
   const source = { ...cRecord, id: "incoming-c", workflowStatus: "pre-reviewed" as const, description: "New description", tags: ["Essential"], moods: ["Warm" as const], styles: ["Blues" as const] };
   await store.preReview(source); const merged = await store.merge(cRecord.id, source, "admin@example.test");
   assert.equal(merged.workflowStatus, "published"); assert.equal(merged.description, "New description"); assert.deepEqual(merged.tags.sort(), ["Essential", "Open"]); assert.deepEqual(merged.moods, ["Warm"]); assert.deepEqual(merged.styles, ["Blues"]);
@@ -90,27 +132,26 @@ test("merge combines allowed metadata and restores the destination to published"
 });
 
 test("approve after duplicate resolution leaves one public chord", async () => {
-  const { mf, store } = await database(); await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" }); await store.reject(cRecord.id);
+  const { mf, store } = await database(); await publishRecord(store, cRecord);
   const candidate = { ...cRecord, id: "approved-c", workflowStatus: "pre-reviewed" as const };
-  const duplicate = await store.findDuplicate(candidate); assert.equal(duplicate?.record.workflowStatus, "rejected");
+  await store.preReview(candidate); const duplicate = await store.findDuplicate(candidate); assert.equal(duplicate?.record.workflowStatus, "published");
   const published = await store.replace(duplicate!.record.id, candidate, "admin@example.test");
   assert.equal(published.workflowStatus, "published"); assert.deepEqual((await store.list("published")).map((record) => record.id), [candidate.id]);
   await mf.dispose();
 });
 
-async function failingAuditDatabase(): Promise<{ mf: Miniflare; store: D1ChordStore }> { const setup = await database(); await setup.db.prepare("CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit_log BEGIN SELECT RAISE(ABORT, 'simulated audit failure'); END").run(); return setup; }
-
 test("publish transaction rolls back when audit insertion fails", async () => {
-  const { mf, store } = await failingAuditDatabase(); await assert.rejects(store.publish(cRecord)); assert.equal(await store.get(cRecord.id), null); await mf.dispose();
+  const setup = await database(); await setup.store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" }); await setup.db.prepare("CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit_log BEGIN SELECT RAISE(ABORT, 'failure'); END").run();
+  await assert.rejects(setup.store.publish(cRecord)); assert.equal((await setup.store.get(cRecord.id))?.workflowStatus, "pre-reviewed"); await setup.mf.dispose();
 });
 
 test("replacement transaction preserves the old record on failure", async () => {
-  const setup = await database(); await setup.store.publish(cRecord); await setup.db.prepare("CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit_log BEGIN SELECT RAISE(ABORT, 'failure'); END").run();
+  const setup = await database(); await publishRecord(setup.store, cRecord); await setup.db.prepare("CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit_log BEGIN SELECT RAISE(ABORT, 'failure'); END").run();
   await assert.rejects(setup.store.replace(cRecord.id, dRecord)); assert.equal((await setup.store.get(cRecord.id))?.workflowStatus, "published"); assert.equal(await setup.store.get(dRecord.id), null); await setup.mf.dispose();
 });
 
 test("merge and rejection transactions roll back with their audit entry", async () => {
-  for (const action of ["merge", "reject"] as const) { const setup = await database(); await setup.store.publish(cRecord); await setup.db.prepare("CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit_log BEGIN SELECT RAISE(ABORT, 'failure'); END").run(); if (action === "merge") await assert.rejects(setup.store.merge(cRecord.id, { ...cRecord, tags: ["Warm"] })); else await assert.rejects(setup.store.reject(cRecord.id)); const current = await setup.store.get(cRecord.id); assert.equal(current?.workflowStatus, "published"); assert.deepEqual(current?.tags, cRecord.tags); await setup.mf.dispose(); }
+  for (const action of ["merge", "reject"] as const) { const setup = await database(); if (action === "merge") await publishRecord(setup.store, cRecord); else await setup.store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" }); await setup.db.prepare("CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit_log BEGIN SELECT RAISE(ABORT, 'failure'); END").run(); if (action === "merge") await assert.rejects(setup.store.merge(cRecord.id, { ...cRecord, tags: ["Warm"] })); else await assert.rejects(setup.store.reject(cRecord.id)); const current = await setup.store.get(cRecord.id); assert.equal(current?.workflowStatus, action === "merge" ? "published" : "pre-reviewed"); assert.deepEqual(current?.tags, cRecord.tags); await setup.mf.dispose(); }
 });
 
 test("import dry-run is non-mutating and retry is idempotent", async () => {
@@ -119,7 +160,7 @@ test("import dry-run is non-mutating and retry is idempotent", async () => {
 });
 
 test("hosted enrichment preview applies only approved fields", async () => {
-  const { mf, store } = await database(); await store.publish(cRecord);
+  const { mf, store } = await database(); await publishRecord(store, cRecord);
   const imported = { ...createChordExport([cRecord]).records[0], description: "Enriched", difficulty: 4, moods: ["Warm"], fretPositions: cRecord.fretPositions };
   const preview = await store.previewEnrichment([imported]); assert.equal(preview.counts.update, 1);
   const report = await store.applyEnrichment([imported], "admin@example.test"); assert.deepEqual(report.applied, { new: 0, updated: 1 });
@@ -141,15 +182,15 @@ test("hosted review import posts pre-reviewed records with the current Access se
 });
 
 test("disabled production mutations stay hidden while public API remains unauthenticated", async () => {
-  const { mf, db, store } = await database(); await store.publish(cRecord); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
+  const { mf, db, store } = await database(); await publishRecord(store, cRecord); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
   const publicResponse = await handleApi(new Request("https://example.test/api/chords/published"), env); assert.equal(publicResponse.status, 200); assert.equal(((await publicResponse.json()) as { records: unknown[] }).records.length, 1);
   const mutation = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/reject`, { method: "POST" }), env, adminDependencies); assert.equal(mutation.status, 404); await mf.dispose();
 });
 
 test("published chords have a public slug endpoint while unpublished chords remain hidden", async () => {
   const { mf, db, store } = await database();
-  await store.publish(cRecord);
-  await store.publish(cBarreRecord);
+  await publishRecord(store, cRecord);
+  await publishRecord(store, cBarreRecord);
   await store.preReview({ ...dRecord, workflowStatus: "pre-reviewed" });
   const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
   const slug = hydratePersistedChord(cRecord).slug;
@@ -163,7 +204,7 @@ test("published chords have a public slug endpoint while unpublished chords rema
 });
 
 test("dynamic chord routes render SEO metadata and a friendly 404", async () => {
-  const { mf, db, store } = await database(); await store.publish(cRecord);
+  const { mf, db, store } = await database(); await publishRecord(store, cRecord);
   const template = "<title>__CHORD_PAGE_TITLE__</title><meta content=\"__CHORD_PAGE_DESCRIPTION__\"><link href=\"__CHORD_PAGE_CANONICAL__\"><h1>__CHORD_PAGE_NAME__</h1>";
   const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false", ASSETS: { fetch: async () => new Response(template, { headers: { "Content-Type": "text/html" } }) } } as WorkerEnv;
   const slug = hydratePersistedChord(cRecord).slug;
@@ -194,7 +235,7 @@ test("review route and every admin endpoint reject unauthenticated requests", as
 
 test("administrator export includes lossless records and AI enrichment fields in JSON and CSV", async () => {
   const { mf, db, store } = await database();
-  await store.publish(cRecord); await store.preReview({ ...dRecord, workflowStatus: "pre-reviewed" });
+  await publishRecord(store, cRecord); await store.preReview({ ...dRecord, workflowStatus: "pre-reviewed" });
   const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
   const jsonResponse = await handleApi(new Request("https://example.test/api/admin/chords/export?format=json"), env, adminDependencies);
   assert.equal(jsonResponse.status, 200); assert.equal(jsonResponse.headers.get("Cache-Control"), "no-store");
@@ -278,7 +319,7 @@ test("authenticated administrator can load review, edit and publish with attribu
 });
 
 test("authenticated editorial saves work without enabling broader administrator mutations", async () => {
-  const { mf, db, store } = await database(); await store.publish(cRecord);
+  const { mf, db, store } = await database(); await publishRecord(store, cRecord);
   const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false", ALLOW_EDITORIAL_MUTATIONS: "true" } as WorkerEnv;
   const edit = await handleApi(new Request(`https://example.test/api/admin/chords/${cRecord.id}/edit`, { method: "POST", body: JSON.stringify({ difficulty: 3, moods: ["Warm"], styles: ["Jazz"] }) }), env, adminDependencies);
   assert.equal(edit.status, 200);

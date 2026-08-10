@@ -3,18 +3,19 @@ import { findVoicingDuplicate } from "../src/chords/repository.ts";
 import { hydratePersistedChord, validatePersistedChord, type PersistedChordRecordV1, type PersistedWorkflowStatus } from "../src/chords/persisted.ts";
 import { legacyChordSlug, withPublicSlugs } from "../src/chords/slug.ts";
 import type { D1Database, D1PreparedStatement } from "./types.ts";
-import { applyEnrichmentPatch, classifyEnrichmentRows, type EnrichmentPreview } from "../src/chords/enrichment.ts";
+import { applyEnrichmentPatch, classifyEnrichmentRows, duplicateMergePatch, type EnrichmentPreview } from "../src/chords/enrichment.ts";
+import { WorkflowTransitionError, workflowTransition } from "../src/chords/workflow.ts";
 
 interface ChordRow { id: string; schema_version: number; record_json: string }
-export interface HostedImportReport { inserted: number; updated: number; skipped: number; duplicate: number; quarantined: number; failed: number; diagnostics: string[] }
-export interface HostedEnrichmentApplyReport { preview: EnrichmentPreview; applied: { new: number; updated: number } }
+export interface HostedImportReport { inserted: number; updated: number; skipped: number; duplicate: number; quarantined: number; failed: number; diagnostics: string[]; records: PersistedChordRecordV1[] }
+export interface HostedEnrichmentApplyReport { preview: EnrichmentPreview; applied: { new: number; updated: number }; records: PersistedChordRecordV1[] }
 export interface PublishedPosition { record: PersistedChordRecordV1; slug: string }
 export interface PublishedSlugResolution { record: PersistedChordRecordV1; slug: string; legacy: boolean; positions: PublishedPosition[]; positionIndex: number }
 export interface HostedDuplicateMatch { record: PersistedChordRecordV1; similarity: number; exact: boolean }
 
 export class HostedDataError extends Error {
-  readonly code: "INVALID_RECORD" | "UNKNOWN_VERSION" | "DUPLICATE" | "NOT_FOUND" | "DATABASE";
-  constructor(code: "INVALID_RECORD" | "UNKNOWN_VERSION" | "DUPLICATE" | "NOT_FOUND" | "DATABASE", message: string) { super(message); this.name = "HostedDataError"; this.code = code; }
+  readonly code: "INVALID_RECORD" | "UNKNOWN_VERSION" | "INVALID_TRANSITION" | "DUPLICATE" | "NOT_FOUND" | "DATABASE";
+  constructor(code: "INVALID_RECORD" | "UNKNOWN_VERSION" | "INVALID_TRANSITION" | "DUPLICATE" | "NOT_FOUND" | "DATABASE", message: string) { super(message); this.name = "HostedDataError"; this.code = code; }
 }
 
 function parseRow(row: ChordRow): PersistedChordRecordV1 {
@@ -123,37 +124,52 @@ export class D1ChordStore {
   private audit(id: string | null, action: string, actor: string, metadata: unknown = {}): D1PreparedStatement { return this.db.prepare("INSERT INTO admin_audit_log (chord_voicing_id,action,actor_identifier,metadata_json) VALUES (?1,?2,?3,?4)").bind(id, action, actor, JSON.stringify(metadata)); }
   private async atomic(statements: D1PreparedStatement[]): Promise<void> { const results = await this.db.batch(statements); if (results.some((result) => !result.success)) throw new HostedDataError("DATABASE", "Atomic chord operation failed."); }
 
+  private status(from: PersistedWorkflowStatus | null, action: Parameters<typeof workflowTransition>[1]): PersistedWorkflowStatus {
+    try { return workflowTransition(from, action); }
+    catch (error) { if (error instanceof WorkflowTransitionError) throw new HostedDataError("INVALID_TRANSITION", error.message); throw error; }
+  }
+
   async preReview(value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
-    const record = this.validated(value, "pre-reviewed"); await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, "Moved to pre-reviewed", actor)]); return record;
+    const input = this.validated(value, "pre-reviewed"); const current = await this.get(input.id);
+    const record = { ...input, workflowStatus: this.status(current?.workflowStatus ?? null, "import") };
+    await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, "Imported to pre-reviewed", actor)]); return record;
   }
 
   async publish(value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
-    const record = this.validated(value, "published"); const hydrated = hydratePersistedChord(record); const published = await this.list("published");
+    const input = this.validated(value, "published"); const current = await this.get(input.id);
+    const record = { ...input, workflowStatus: this.status(current?.workflowStatus ?? null, "approve") }; const hydrated = hydratePersistedChord(record); const published = await this.list("published");
     if (published.some((item) => item.id !== record.id && exactVoicingKey(hydratePersistedChord(item)) === exactVoicingKey(hydrated))) throw new HostedDataError("DUPLICATE", "An equivalent voicing is already published.");
     await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, "Published", actor)]); return record;
   }
 
-  async reject(id: string, actor = "system"): Promise<void> {
+  async reject(id: string, actor = "system"): Promise<PersistedChordRecordV1> {
     const current = await this.get(id); if (!current) throw new HostedDataError("NOT_FOUND", "Chord not found.");
-    const record = { ...current, workflowStatus: "rejected" as const }; await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(id, "Rejected", actor)]);
+    const record = { ...current, workflowStatus: this.status(current.workflowStatus, "reject") }; await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(id, "Rejected", actor)]); return record;
+  }
+
+  async restore(id: string, actor = "system"): Promise<PersistedChordRecordV1> {
+    const current = await this.get(id); if (!current) throw new HostedDataError("NOT_FOUND", "Chord not found.");
+    const record = { ...current, workflowStatus: this.status(current.workflowStatus, "restore") };
+    await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(id, "Restored to pre-reviewed", actor)]); return record;
   }
 
   async replace(replacedId: string, value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
     const old = await this.get(replacedId); if (!old) throw new HostedDataError("NOT_FOUND", "Replacement target not found.");
-    const replacement = this.validated(value, "published"); const rejected = { ...old, workflowStatus: "rejected" as const };
+    const input = this.validated(value, "published"); const existingReplacement = input.id === replacedId ? old : await this.get(input.id);
+    const replacement = { ...input, workflowStatus: this.status(input.id === replacedId ? null : existingReplacement?.workflowStatus ?? null, "replace-new") };
+    const rejected = { ...old, workflowStatus: this.status(old.workflowStatus, "replace-old") };
     await this.atomic([this.upsert(rejected), this.upsert(replacement), ...this.tagStatements(replacement), this.audit(replacement.id, "Replaced chord", actor, { replacedId })]); return replacement;
   }
 
   async merge(targetId: string, value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
     const target = await this.get(targetId); if (!target) throw new HostedDataError("NOT_FOUND", "Merge target not found.");
     const source = this.validated(value, "published");
-    const merged = { ...target, workflowStatus: "published" as const, description: target.description || source.description,
-      tags: [...new Set([...target.tags, ...source.tags])], moods: [...new Set([...(target.moods ?? []), ...(source.moods ?? [])])],
-      styles: [...new Set([...(target.styles ?? []), ...(source.styles ?? [])])] };
+    const action = target.workflowStatus === "published" ? "metadata-update" : "approve";
+    const merged = { ...applyEnrichmentPatch(target, duplicateMergePatch(target, source)), workflowStatus: this.status(target.workflowStatus, action) };
     const statements = [this.upsert(merged), ...this.tagStatements(merged)];
     if (source.id !== targetId) {
       const storedSource = await this.get(source.id);
-      if (storedSource) statements.push(this.upsert({ ...storedSource, workflowStatus: "rejected" as const }));
+      if (storedSource) statements.push(this.upsert({ ...storedSource, workflowStatus: this.status(storedSource.workflowStatus, "reject") }));
     }
     statements.push(this.audit(targetId, "Merged duplicate metadata and published", actor, { sourceId: source.id }));
     await this.atomic(statements); return merged;
@@ -161,6 +177,7 @@ export class D1ChordStore {
 
   async edit(id: string, value: unknown, actor = "system"): Promise<PersistedChordRecordV1> {
     const current = await this.get(id); if (!current) throw new HostedDataError("NOT_FOUND", "Chord not found.");
+    this.status(current.workflowStatus, "metadata-update");
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new HostedDataError("INVALID_RECORD", "Editorial changes must be an object.");
     const changes = value as Partial<PersistedChordRecordV1>;
     const edited = this.validated({ ...current,
@@ -180,16 +197,18 @@ export class D1ChordStore {
   async quarantine(): Promise<Array<{ id: number; source: string; raw_json: string; issues_json: string; created_at: string }>> { const result = await this.db.prepare("SELECT id,source,raw_json,issues_json,created_at FROM quarantined_records ORDER BY id DESC LIMIT 500").all<{ id: number; source: string; raw_json: string; issues_json: string; created_at: string }>(); return result.results; }
 
   async importRecords(values: unknown[], dryRun: boolean, actor = "system"): Promise<HostedImportReport> {
-    const report: HostedImportReport = { inserted: 0, updated: 0, skipped: 0, duplicate: 0, quarantined: 0, failed: 0, diagnostics: [] };
+    const report: HostedImportReport = { inserted: 0, updated: 0, skipped: 0, duplicate: 0, quarantined: 0, failed: 0, diagnostics: [], records: [] };
     for (const value of values) {
       try {
         const validation = validatePersistedChord(value); if (!validation.ok) { report.quarantined += 1; report.diagnostics.push(validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")); continue; }
-        const record = validation.value; hydratePersistedChord(record); const existing = await this.get(record.id);
+        const input = validation.value; const existing = await this.get(input.id);
+        const record = { ...input, workflowStatus: existing?.workflowStatus ?? this.status(null, "import") }; hydratePersistedChord(record);
         if (existing && JSON.stringify(existing) === JSON.stringify(record)) { report.skipped += 1; continue; }
-        const sameShape = (await this.list(record.workflowStatus)).some((item) => item.id !== record.id && exactVoicingKey(hydratePersistedChord(item)) === exactVoicingKey(hydratePersistedChord(record)));
+        if (existing) { report.failed += 1; report.diagnostics.push(`${record.id}: existing records require enrichment or explicit conflict resolution`); continue; }
+        const sameShape = (await this.list("pre-reviewed")).some((item) => item.id !== record.id && exactVoicingKey(hydratePersistedChord(item)) === exactVoicingKey(hydratePersistedChord(record)));
         if (sameShape) { report.duplicate += 1; continue; }
-        if (existing) report.updated += 1; else report.inserted += 1;
-        if (!dryRun) await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, existing ? "Imported update" : "Imported insert", actor)]);
+        report.inserted += 1;
+        if (!dryRun) { await this.atomic([this.upsert(record), ...this.tagStatements(record), this.audit(record.id, "Imported to pre-reviewed", actor)]); report.records.push(record); }
       } catch (error) { report.failed += 1; report.diagnostics.push(error instanceof Error ? error.message : "Import failure"); }
     }
     return report;
@@ -198,15 +217,15 @@ export class D1ChordStore {
   async previewEnrichment(values: unknown[]): Promise<EnrichmentPreview> { return classifyEnrichmentRows(values, await this.listAll()); }
 
   async applyEnrichment(values: unknown[], actor = "system"): Promise<HostedEnrichmentApplyReport> {
-    const preview = await this.previewEnrichment(values); const applied = { new: 0, updated: 0 };
+    const preview = await this.previewEnrichment(values); const applied = { new: 0, updated: 0 }; const records: PersistedChordRecordV1[] = [];
     for (const row of preview.rows) {
-      if (row.classification === "new" && row.record) { await this.preReview(row.record, actor); applied.new += 1; }
+      if (row.classification === "new" && row.record) { records.push(await this.preReview(row.record, actor)); applied.new += 1; }
       if (row.classification === "update" && row.patch) {
         const current = await this.get(row.id); if (!current) throw new HostedDataError("NOT_FOUND", "Enrichment target no longer exists.");
-        const updated = applyEnrichmentPatch(current, row.patch);
-        await this.atomic([this.upsert(updated), ...this.tagStatements(updated), this.audit(row.id, "Applied AI enrichment", actor, { changedFields: row.changedFields })]); applied.updated += 1;
+        const updated = { ...applyEnrichmentPatch(current, row.patch), workflowStatus: this.status(current.workflowStatus, "enrichment") };
+        await this.atomic([this.upsert(updated), ...this.tagStatements(updated), this.audit(row.id, "Applied AI enrichment", actor, { changedFields: row.changedFields })]); applied.updated += 1; records.push(updated);
       }
     }
-    return { preview, applied };
+    return { preview, applied, records };
   }
 }
