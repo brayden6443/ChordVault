@@ -353,11 +353,12 @@ const importPreviewRows = byId("importPreviewRows");
 const applyImport = byId<HTMLButtonElement>("applyImport");
 function renderImportPreview(preview: EnrichmentPreview): void {
   importPreview.hidden = false;
-  importPreviewCounts.innerHTML = Object.entries(preview.counts).map(([label, count]) => `<span>${escapeHtml(label)}: ${count}</span>`).join("");
+  const labels: Record<string, string> = { new: "New", unchanged: "Unchanged", "enrichment-update": "Updates", "protected-field-conflict": "Conflicts", "duplicate-identity": "Duplicate identities", invalid: "Invalid" };
+  importPreviewCounts.innerHTML = Object.entries(preview.counts).map(([label, count]) => `<span>${escapeHtml(labels[label] ?? label)}: ${count}</span>`).join("");
   const notable = preview.rows.filter((row) => row.classification !== "unchanged");
   importPreviewRows.innerHTML = notable.length ? notable.map((row) => `<li><strong>${escapeHtml(row.classification)}</strong> ${escapeHtml(row.id || `Row ${row.index + 1}`)}${row.changedFields.length ? ` - ${escapeHtml(row.changedFields.join(", "))}` : ""}${row.reasons.length ? ` - ${escapeHtml(row.reasons.join("; "))}` : ""}</li>`).join("") : "<li>Every record is unchanged.</li>";
-  applyImport.disabled = preview.counts.new + preview.counts.update === 0;
-  applyImport.textContent = `Apply ${preview.counts.new + preview.counts.update} changes`;
+  applyImport.disabled = preview.counts.new + preview.counts["enrichment-update"] === 0;
+  applyImport.textContent = `Apply ${preview.counts.new + preview.counts["enrichment-update"]} changes`;
 }
 
 applyImport.addEventListener("click", async () => {

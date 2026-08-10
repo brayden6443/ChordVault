@@ -156,14 +156,32 @@ test("merge and rejection transactions roll back with their audit entry", async 
 });
 
 test("import dry-run is non-mutating and retry is idempotent", async () => {
-  const { mf, store } = await database(); const dry = await store.importRecords([cRecord], true); assert.equal(dry.inserted, 1); assert.equal(await store.get(cRecord.id), null);
-  const first = await store.importRecords([cRecord], false); const retry = await store.importRecords([cRecord], false); assert.equal(first.inserted, 1); assert.equal(retry.skipped, 1); await mf.dispose();
+  const { mf, store } = await database(); const incoming = { ...cRecord, workflowStatus: "pre-reviewed" as const };
+  const dry = await store.importRecords([incoming], true); assert.equal(dry.inserted, 1); assert.equal(await store.get(cRecord.id), null);
+  const first = await store.importRecords([incoming], false); const retry = await store.importRecords([incoming], false); assert.equal(first.inserted, 1); assert.equal(retry.skipped, 1); await mf.dispose();
+});
+
+test("authoritative import pipeline classifies and applies a mixed batch", async () => {
+  const { mf, store } = await database(); await publishRecord(store, cRecord);
+  const report = await store.importRecords([
+    { ...dRecord, workflowStatus: "pre-reviewed" },
+    cRecord,
+    { id: cRecord.id, description: "Enriched through the import endpoint" },
+    { ...cRecord, fretPositions: [0, 0, 0, 0, 0, 0] },
+    { ...cRecord, id: "duplicate-c-identity", workflowStatus: "pre-reviewed" },
+    { id: "invalid" },
+  ], false, "admin@example.test");
+  assert.deepEqual({ inserted: report.inserted, updated: report.updated, skipped: report.skipped, duplicate: report.duplicate, quarantined: report.quarantined, failed: report.failed },
+    { inserted: 1, updated: 1, skipped: 1, duplicate: 1, quarantined: 1, failed: 1 });
+  assert.equal((await store.get(dRecord.id))?.workflowStatus, "pre-reviewed");
+  assert.equal((await store.get(cRecord.id))?.description, "Enriched through the import endpoint");
+  await mf.dispose();
 });
 
 test("hosted enrichment preview applies only approved fields", async () => {
   const { mf, store } = await database(); await publishRecord(store, cRecord);
   const imported = { ...createChordExport([cRecord]).records[0], description: "Enriched", difficulty: 4, moods: ["Warm"], fretPositions: cRecord.fretPositions };
-  const preview = await store.previewEnrichment([imported]); assert.equal(preview.counts.update, 1);
+  const preview = await store.previewEnrichment([imported]); assert.equal(preview.counts["enrichment-update"], 1);
   const report = await store.applyEnrichment([imported], "admin@example.test"); assert.deepEqual(report.applied, { new: 0, updated: 1 });
   const updated = await store.get(cRecord.id); assert.equal(updated?.description, "Enriched"); assert.equal(updated?.difficulty, 4); assert.deepEqual(updated?.moods, ["Warm"]);
   assert.deepEqual(updated?.fretPositions, cRecord.fretPositions); assert.deepEqual(updated?.tuning, cRecord.tuning); assert.equal(updated?.workflowStatus, cRecord.workflowStatus); assert.deepEqual(updated?.provenance, cRecord.provenance);

@@ -1,7 +1,9 @@
 import { hydratePersistedChord, validatePersistedChord, type PersistedChordRecordV1 } from "./persisted.ts";
+import { exactVoicingKey } from "./identity.ts";
 import { recipeById, type RecipeId } from "./recipes.ts";
 
-export type EnrichmentClassification = "new" | "unchanged" | "update" | "conflict" | "invalid";
+export type ImportClassification = "new" | "unchanged" | "enrichment-update" | "protected-field-conflict" | "duplicate-identity" | "invalid";
+export type EnrichmentClassification = ImportClassification;
 export interface EnrichmentPatch {
   displayNameOverride?: string;
   recipeId?: RecipeId;
@@ -12,13 +14,15 @@ export interface EnrichmentPatch {
   description?: string;
   relatedChords?: string[];
 }
-export interface EnrichmentPreviewRow {
-  index: number; id: string; classification: EnrichmentClassification; changedFields: string[]; reasons: string[]; patch?: EnrichmentPatch; record?: PersistedChordRecordV1;
+export interface ImportPreviewRow {
+  index: number; id: string; classification: ImportClassification; changedFields: string[]; reasons: string[]; patch?: EnrichmentPatch; record?: PersistedChordRecordV1;
 }
-export interface EnrichmentPreview {
-  counts: Record<EnrichmentClassification, number>;
-  rows: EnrichmentPreviewRow[];
+export interface ImportPreview {
+  counts: Record<ImportClassification, number>;
+  rows: ImportPreviewRow[];
 }
+export type EnrichmentPreviewRow = ImportPreviewRow;
+export type EnrichmentPreview = ImportPreview;
 
 const protectedFields: Array<keyof PersistedChordRecordV1> = ["id", "schemaVersion", "root", "tuning", "fretPositions", "fingerPositions", "workflowStatus", "provenance", "catalog"];
 function same(left: unknown, right: unknown): boolean { return JSON.stringify(left) === JSON.stringify(right); }
@@ -83,20 +87,29 @@ export function duplicateMergePatch(target: PersistedChordRecordV1, source: Pers
   };
 }
 
-export function classifyEnrichmentRows(values: unknown[], existingRecords: PersistedChordRecordV1[]): EnrichmentPreview {
+function identity(record: PersistedChordRecordV1): string { return exactVoicingKey(hydratePersistedChord(record)); }
+
+export function classifyImportRows(values: unknown[], existingRecords: PersistedChordRecordV1[]): ImportPreview {
   const existing = new Map(existingRecords.map((record) => [record.id, record]));
-  const rows: EnrichmentPreviewRow[] = values.map((value, index) => {
+  const identities = new Map<string, PersistedChordRecordV1[]>();
+  for (const record of existingRecords) { const key = identity(record); identities.set(key, [...(identities.get(key) ?? []), record]); }
+  const acceptedNewIdentities = new Set<string>();
+  const rows: ImportPreviewRow[] = values.map((value, index) => {
     if (!object(value)) return { index, id: "", classification: "invalid", changedFields: [], reasons: ["record must be an object"] };
     if (typeof value.__importError === "string") return { index, id: typeof value.id === "string" ? value.id : "", classification: "invalid", changedFields: [], reasons: [value.__importError] };
     const id = typeof value.id === "string" ? value.id : ""; if (!id) return { index, id, classification: "invalid", changedFields: [], reasons: ["id must be a non-empty string"] };
     const current = existing.get(id);
     if (!current) {
-      const validation = validatePersistedChord(value); return validation.ok
-        ? { index, id, classification: "new", changedFields: [], reasons: [], record: persistedOnly({ ...validation.value, workflowStatus: "pre-reviewed" }) }
-        : { index, id, classification: "invalid", changedFields: [], reasons: validation.issues.map((issue) => `${issue.path}: ${issue.message}`) };
+      const validation = validatePersistedChord(value);
+      if (!validation.ok) return { index, id, classification: "invalid", changedFields: [], reasons: validation.issues.map((issue) => `${issue.path}: ${issue.message}`) };
+      const candidate = persistedOnly({ ...validation.value, workflowStatus: "pre-reviewed" });
+      const key = identity(candidate); const matches = identities.get(key) ?? [];
+      if (matches.length || acceptedNewIdentities.has(key)) return { index, id, classification: "duplicate-identity", changedFields: ["canonicalIdentity"], reasons: [matches.length === 1 ? `canonical identity already belongs to ${matches[0]!.id}` : "canonical identity is not unique"] };
+      acceptedNewIdentities.add(key);
+      return { index, id, classification: "new", changedFields: [], reasons: [], record: candidate };
     }
     const conflicts = protectedFields.filter((field) => Object.hasOwn(value, field) && !same(value[field], current[field])).map(String);
-    if (conflicts.length) return { index, id, classification: "conflict", changedFields: conflicts, reasons: conflicts.map((field) => `${field} differs from the persisted record`) };
+    if (conflicts.length) return { index, id, classification: "protected-field-conflict", changedFields: conflicts, reasons: conflicts.map((field) => `${field} differs from the persisted record`) };
     try {
       const patch = requestedPatch(value, current); const next = applyEnrichmentPatch(current, patch); const chord = hydratePersistedChord(next);
       if (Object.hasOwn(value, "notes") && !same(value.notes, chord.notes)) return { index, id, classification: "invalid", changedFields: ["notes"], reasons: ["notes do not match deterministic fret and quality calculation"] };
@@ -104,9 +117,12 @@ export function classifyEnrichmentRows(values: unknown[], existingRecords: Persi
       const changedFields = Object.keys(patch).filter((field) => !same(next[field as keyof PersistedChordRecordV1], current[field as keyof PersistedChordRecordV1]));
       if (Object.hasOwn(value, "notes") && !same(value.notes, hydratePersistedChord(current).notes)) changedFields.push("notes");
       if (Object.hasOwn(value, "intervals") && !same(value.intervals, hydratePersistedChord(current).intervals)) changedFields.push("intervals");
-      return { index, id, classification: changedFields.length ? "update" : "unchanged", changedFields: [...new Set(changedFields)], reasons: [], patch };
+      return { index, id, classification: changedFields.length ? "enrichment-update" : "unchanged", changedFields: [...new Set(changedFields)], reasons: [], patch };
     } catch (error) { return { index, id, classification: "invalid", changedFields: [], reasons: [error instanceof Error ? error.message : "invalid enrichment values"] }; }
   });
-  const counts = { new: 0, unchanged: 0, update: 0, conflict: 0, invalid: 0 } satisfies Record<EnrichmentClassification, number>;
+  const counts = { new: 0, unchanged: 0, "enrichment-update": 0, "protected-field-conflict": 0, "duplicate-identity": 0, invalid: 0 } satisfies Record<ImportClassification, number>;
   rows.forEach((row) => { counts[row.classification] += 1; }); return { counts, rows };
 }
+
+/** Backwards-compatible name; all imports now use the same classifier. */
+export const classifyEnrichmentRows = classifyImportRows;
