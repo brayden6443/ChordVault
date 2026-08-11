@@ -21,7 +21,8 @@ export class HostedReviewClient {
   private url(path: string): string { return `${this.apiBase.replace(/\/$/, "")}${path}`; }
 
   private async response<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await this.fetcher(this.url(path), { credentials: "same-origin", headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}) }, ...init });
+    const fetcher = this.fetcher;
+    const response = await fetcher(this.url(path), { credentials: "same-origin", headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}) }, ...init });
     const payload = await response.json() as T & { error?: { message?: string } };
     if (!response.ok) throw new ChordRepositoryError("FAILED_WRITE", payload.error?.message ?? `Hosted review request failed with status ${response.status}.`);
     return payload;

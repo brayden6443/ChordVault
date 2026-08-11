@@ -227,6 +227,20 @@ test("hosted review workspace loads pre-reviewed D1 records with the Access sess
   assert.deepEqual(workspace.published.map((record) => record.id), [dRecord.id]);
 });
 
+test("hosted review workspace loads all 54 pre-reviewed records without binding native fetch", async () => {
+  const records = Array.from({ length: 54 }, (_, index) => ({ ...cRecord, id: `pre-reviewed-${index + 1}`, workflowStatus: "pre-reviewed" as const }));
+  const strictFetcher: typeof fetch = function (this: unknown, input: RequestInfo | URL) {
+    assert.equal(this, undefined);
+    assert.equal(String(input), "/api/admin/backups");
+    return Promise.resolve(Response.json({ records }));
+  };
+  const workspace = await new HostedReviewClient("/api", strictFetcher).loadWorkspace();
+  assert.equal(workspace.records.length, 54);
+  assert.equal(workspace.preReviewed.length, 54);
+  assert.equal(workspace.published.length, 0);
+  assert.equal(workspace.rejected.length, 0);
+});
+
 function reviewClient(db: D1Database): HostedReviewClient {
   const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "true", ALLOW_EDITORIAL_MUTATIONS: "true" } as WorkerEnv;
   const fetcher: typeof fetch = async (input, init) => {
