@@ -4,7 +4,7 @@ import test from "node:test";
 import { Miniflare } from "miniflare";
 import { CANONICAL_VOICINGS } from "../src/chords/canonical.ts";
 import { LocalStorageChordRepository, type StoragePort } from "../src/chords/chord-repository.ts";
-import { HostedReadChordRepository } from "../src/chords/hosted-repository.ts";
+import { HostedReadChordRepository, loadPublicPublishedVoicings } from "../src/chords/hosted-repository.ts";
 import { HostedReviewClient } from "../src/chords/hosted-review-client.ts";
 import { backupThenUpload, preparedPreReviewedImport, prepareHostedImport, uploadPreparedImport } from "../src/chords/hosted-import.ts";
 import { hydratePersistedChord, persistChordVoicing, validatePersistedChord } from "../src/chords/persisted.ts";
@@ -295,6 +295,29 @@ test("published chords have a public slug endpoint while unpublished chords rema
   const hiddenSlug = hydratePersistedChord({ ...dRecord, workflowStatus: "pre-reviewed" }).slug;
   assert.equal((await handleApi(new Request(`https://example.test/api/chords/slug/${hiddenSlug}`), env)).status, 404);
   await mf.dispose();
+});
+
+test("public API reflects D1 publication transitions and hides every unpublished status", async () => {
+  const { mf, db, store } = await database(); const env = { DB: db, ALLOW_ADMIN_MUTATIONS: "false" } as WorkerEnv;
+  await store.preReview({ ...cRecord, workflowStatus: "pre-reviewed" }); await store.preReview({ ...dRecord, workflowStatus: "pre-reviewed" }); await store.reject(dRecord.id);
+  let response = await handleApi(new Request("https://example.test/api/chords/published"), env);
+  assert.deepEqual((await response.json() as { records: Array<{ id: string }> }).records, []);
+  await store.publish(cRecord);
+  response = await handleApi(new Request("https://example.test/api/chords/published"), env);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual((await response.json() as { records: Array<{ id: string }> }).records.map((record) => record.id), [cRecord.id]); await mf.dispose();
+});
+
+test("public loader cannot receive chords injected through browser storage", async () => {
+  const browser = new MemoryStorage(); browser.setItem("chord-vault-published-voicings", JSON.stringify([dRecord])); browser.setItem("chord-vault-final-approved-keys", JSON.stringify([dRecord.id]));
+  const chords = await loadPublicPublishedVoicings("/api", async (input) => { assert.equal(String(input), "/api/chords/published"); return Response.json({ records: [cRecord] }); });
+  assert.deepEqual(chords.map((chord) => chord.id), [cRecord.id]); assert.equal(chords.some((chord) => chord.id === dRecord.id), false);
+});
+
+test("public application availability has no canonical or browser workflow fallback", async () => {
+  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /CANONICAL_VOICINGS|publicLibrary|publishedKeys|createChordRepository|savePublicLibrary/);
+  assert.match(source, /loadPublicPublishedVoicings/);
 });
 
 test("dynamic chord routes render SEO metadata and a friendly 404", async () => {

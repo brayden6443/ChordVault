@@ -49,3 +49,13 @@ export async function loadHostedPublished(apiBase: string, fetcher: typeof fetch
   if (!response.ok) throw new ChordRepositoryError("CORRUPT_STORAGE", "Hosted chord service is unavailable.");
   const body = await response.json() as { records?: unknown[] }; if (!Array.isArray(body.records)) throw new ChordRepositoryError("CORRUPT_STORAGE", "Hosted chord response is malformed."); return body.records;
 }
+
+export async function loadPublicPublishedVoicings(apiBase = "/api", fetcher: typeof fetch = fetch): Promise<ChordVoicing[]> {
+  const records = await loadHostedPublished(apiBase, fetcher); const published: ChordVoicing[] = [];
+  for (const raw of records) {
+    const result = validatePersistedChord(raw);
+    if (!result.ok || result.value.workflowStatus !== "published") throw new ChordRepositoryError("SCHEMA_VALIDATION", "Public chord response contained a non-published or invalid record.");
+    published.push(hydratePersistedChord(result.value));
+  }
+  return withPublicSlugs(published);
+}

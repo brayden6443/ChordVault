@@ -64,7 +64,7 @@ export async function handleApi(request: Request, env: WorkerEnv, dependencies: 
   const url = new URL(request.url); const path = url.pathname; const store = new D1ChordStore(env.DB);
   if (!sameOrigin(request, url)) return json({ error: { code: "ORIGIN_DENIED", message: "Cross-origin requests are not allowed." } }, 403);
   try {
-    if (request.method === "GET" && path === "/api/chords/published") return json({ records: await store.list("published") }, 200, true);
+    if (request.method === "GET" && path === "/api/chords/published") return json({ records: await store.list("published") });
     const chordSlugMatch = path.match(/^\/api\/chords\/slug\/([^/]+)$/);
     if (request.method === "GET" && chordSlugMatch) {
       const resolution = await store.resolvePublishedSlug(decodeURIComponent(chordSlugMatch[1]));
